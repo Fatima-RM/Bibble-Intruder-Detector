@@ -7,6 +7,7 @@ public:
     MotorBase(int p1, int p2, int p3, int p4)
         : pin1(p1), pin2(p2), pin3(p3), pin4(p4) {}
 
+    virtual ~MotorBase() {} // Virtual destructor
     virtual void move() = 0; // Pure virtual function (Polymorphism)
 };
 
@@ -25,11 +26,10 @@ public:
     }
 };
 
-// Forward Movement Class
+// Movement Classes
 class Forward : public MotorControl {
 public:
-    Forward(int p1, int p2, int p3, int p4)
-        : MotorControl(p1, p2, p3, p4) {}
+    Forward(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
 
     void move() override {
         digitalWrite(pin1, LOW);
@@ -40,11 +40,9 @@ public:
     }
 };
 
-// Backward Movement Class
 class Backward : public MotorControl {
 public:
-    Backward(int p1, int p2, int p3, int p4)
-        : MotorControl(p1, p2, p3, p4) {}
+    Backward(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
 
     void move() override {
         digitalWrite(pin1, HIGH);
@@ -55,29 +53,25 @@ public:
     }
 };
 
-// Turn Left Movement Class
 class TurnLeft : public MotorControl {
 public:
-    TurnLeft(int p1, int p2, int p3, int p4)
-        : MotorControl(p1, p2, p3, p4) {}
+    TurnLeft(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
 
     void move() override {
         digitalWrite(pin1, LOW);
         digitalWrite(pin2, HIGH);
         digitalWrite(pin3, LOW);
-        digitalWrite(pin4, LOW);
+        digitalWrite(pin4, HIGH);
         Serial.println("Turning Left");
     }
 };
 
-// Turn Right Movement Class
 class TurnRight : public MotorControl {
 public:
-    TurnRight(int p1, int p2, int p3, int p4)
-        : MotorControl(p1, p2, p3, p4) {}
+    TurnRight(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
 
     void move() override {
-        digitalWrite(pin1, LOW);
+        digitalWrite(pin1, HIGH);
         digitalWrite(pin2, LOW);
         digitalWrite(pin3, HIGH);
         digitalWrite(pin4, LOW);
@@ -91,18 +85,25 @@ private:
     int trig, echo;
 
 public:
-    UltrasonicSensor(int t, int e) : trig(t), echo(e) {
+    UltrasonicSensor(int t, int e) : trig(t), echo(e) {}
+
+    void init() {
         pinMode(trig, OUTPUT);
         pinMode(echo, INPUT);
     }
 
     float getDistance() {
-        digitalWrite(trig, LOW);
-        delayMicroseconds(2);
-        digitalWrite(trig, HIGH);
-        delayMicroseconds(10);
-        digitalWrite(trig, LOW);
-        return (pulseIn(echo, HIGH) * 0.034) / 2;
+        long sum = 0;
+        for (int i = 0; i < 5; i++) {
+            digitalWrite(trig, LOW);
+            delayMicroseconds(2);
+            digitalWrite(trig, HIGH);
+            delayMicroseconds(10);
+            digitalWrite(trig, LOW);
+            sum += pulseIn(echo, HIGH) * 0.034 / 2;
+            delay(20);
+        }
+        return sum / 5;
     }
 };
 
@@ -112,12 +113,14 @@ private:
     int pin;
 
 public:
-    IRSensor(int p) : pin(p) {
+    IRSensor(int p) : pin(p) {}
+
+    void init() {
         pinMode(pin, INPUT);
     }
 
     bool isObstacleDetected() {
-        return !digitalRead(pin);
+        return digitalRead(pin) == LOW;
     }
 };
 
@@ -138,6 +141,13 @@ void setup() {
     pinMode(6, OUTPUT);
     pinMode(9, OUTPUT);
     pinMode(10, OUTPUT);
+
+    // Initialize sensors
+    sensorLeft.init();
+    sensorFront.init();
+    sensorRight.init();
+    leftIR.init();
+    rightIR.init();
 }
 
 void loop() {
@@ -145,28 +155,57 @@ void loop() {
 }
 
 void self_driving() {
-    float distance1 = sensorLeft.getDistance();
-    float distance2 = sensorFront.getDistance();
-    float distance3 = sensorRight.getDistance();
+    float distanceLeft = sensorLeft.getDistance();
+    float distanceFront = sensorFront.getDistance();
+    float distanceRight = sensorRight.getDistance();
 
-    if (distance2 > 20) { // Increased threshold from 14 cm to 20 cm
+    Serial.print("Front: "); Serial.print(distanceFront);
+    Serial.print(" Left: "); Serial.print(distanceLeft);
+    Serial.print(" Right: "); Serial.println(distanceRight);
+
+    if (distanceFront > 30) {  // Move forward if clear
         forward.move();
-    } else if (distance1 > 20 && distance1 > distance3) { // Increased threshold
-        left.move();
-    } else if (distance3 > 20 && distance3 > distance1) { // Increased threshold
-        right.move();
     } else {
-        backward.move();
+        backward.move();  // Move backward first before turning
+        delay(500);
+        backward.stop();
+        delay(200);
+
+        if (distanceLeft > 40 && distanceRight < 30) {  // Prefer left if more space
+            left.move();
+            delay(700);
+        } else if (distanceRight > 40 && distanceLeft < 30) {  // Prefer right if more space
+            right.move();
+            delay(700);
+        } else if (distanceLeft > 30 && distanceRight > 30) {  // Choose the better direction
+            if (distanceLeft > distanceRight) {
+                left.move();
+                delay(700);
+            } else {
+                right.move();
+                delay(700);
+            }
+        } else {  
+            backward.move();  // If stuck, back up and try again
+            delay(800);
+        }
     }
 
     IR_control();
 }
 
 void IR_control() {
-    if (leftIR.isObstacleDetected()) {
-        forward.move();
-    }
-    if (rightIR.isObstacleDetected()) {
+    if (leftIR.isObstacleDetected() && !rightIR.isObstacleDetected()) {
+        Serial.println("Left IR detected an obstacle, turning right.");
+        right.move();
+        delay(500);
+    } else if (rightIR.isObstacleDetected() && !leftIR.isObstacleDetected()) {
+        Serial.println("Right IR detected an obstacle, turning left.");
+        left.move();
+        delay(500);
+    } else if (leftIR.isObstacleDetected() && rightIR.isObstacleDetected()) {
+        Serial.println("Both IR sensors detected obstacles, moving backward.");
         backward.move();
+        delay(500);
     }
 }
