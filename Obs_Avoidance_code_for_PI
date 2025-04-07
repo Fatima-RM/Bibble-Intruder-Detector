@@ -1,0 +1,250 @@
+#include <iostream>
+#include <pigpio.h>
+#include <unistd.h>
+
+using namespace std;
+
+// -------- Base Class for Motors (Abstraction & Encapsulation) --------
+class MotorBase {
+protected:
+    int pin1, pin2, pin3, pin4;  // Motor control pins
+
+public:
+    MotorBase(int p1, int p2, int p3, int p4)
+        : pin1(p1), pin2(p2), pin3(p3), pin4(p4) {}
+
+    virtual ~MotorBase() {}
+    virtual void move() = 0;  // Pure virtual function (Polymorphism)
+};
+
+// -------- Motor Control Class --------
+class MotorControl : public MotorBase {
+public:
+    MotorControl(int p1, int p2, int p3, int p4)
+        : MotorBase(p1, p2, p3, p4) {}
+
+    void stop() {
+        // Stop all motor pins
+        gpioWrite(pin1, 0);
+        gpioWrite(pin2, 0);
+        gpioWrite(pin3, 0);
+        gpioWrite(pin4, 0);
+        cout << "Motors Stopped" << endl;
+    }
+};
+
+// -------- Movement Classes (OOP & Polymorphism) --------
+class Forward : public MotorControl {
+public:
+    Forward(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
+
+    void move() override {
+        // Motor pins for forward motion
+        gpioWrite(pin1, 0);
+        gpioWrite(pin2, 1);
+        gpioWrite(pin3, 1);
+        gpioWrite(pin4, 0);
+        cout << "Moving Forward" << endl;
+    }
+};
+
+class Backward : public MotorControl {
+public:
+    Backward(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
+
+    void move() override {
+        // Motor pins for backward motion
+        gpioWrite(pin1, 1);
+        gpioWrite(pin2, 0);
+        gpioWrite(pin3, 0);
+        gpioWrite(pin4, 1);
+        cout << "Moving Backward" << endl;
+    }
+};
+
+class TurnLeft : public MotorControl {
+public:
+    TurnLeft(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
+
+    void move() override {
+        // Motor pins for left turn
+        gpioWrite(pin1, 0);
+        gpioWrite(pin2, 1);
+        gpioWrite(pin3, 0);
+        gpioWrite(pin4, 1);
+        cout << "Turning Left" << endl;
+    }
+};
+
+class TurnRight : public MotorControl {
+public:
+    TurnRight(int p1, int p2, int p3, int p4) : MotorControl(p1, p2, p3, p4) {}
+
+    void move() override {
+        // Motor pins for right turn
+        gpioWrite(pin1, 1);
+        gpioWrite(pin2, 0);
+        gpioWrite(pin3, 1);
+        gpioWrite(pin4, 0);
+        cout << "Turning Right" << endl;
+    }
+};
+
+// -------- Ultrasonic Sensor Class --------
+class UltrasonicSensor {
+private:
+    int trig, echo;
+
+public:
+    UltrasonicSensor(int t, int e) : trig(t), echo(e) {}
+
+    void init() {
+        // Set modes for trigger and echo
+        gpioSetMode(trig, PI_OUTPUT);
+        gpioSetMode(echo, PI_INPUT);
+    }
+
+    float getDistance() {
+        // Returns average distance over 5 readings
+        long sum = 0;
+        for (int i = 0; i < 5; i++) {
+            gpioWrite(trig, 0);
+            gpioDelay(2);
+            gpioWrite(trig, 1);
+            gpioDelay(10);
+            gpioWrite(trig, 0);
+
+            while (gpioRead(echo) == 0);  // Wait for echo start
+            uint32_t start = gpioTick();
+
+            while (gpioRead(echo) == 1);  // Wait for echo end
+            uint32_t end = gpioTick();
+
+            float distance = (end - start) * 0.034 / 2;
+            sum += distance;
+            usleep(20000); // Delay 20ms
+        }
+        return sum / 5;
+    }
+};
+
+// -------- IR Sensor Class --------
+class IRSensor {
+private:
+    int pin;
+
+public:
+    IRSensor(int p) : pin(p) {}
+
+    void init() {
+        gpioSetMode(pin, PI_INPUT);
+    }
+
+    bool isObstacleDetected() {
+        // Active low detection
+        return gpioRead(pin) == 0;
+    }
+};
+
+// -------- Global Object Declarations --------
+// (Replace with GPIO BCM pin numbers based on your setup)
+Forward forward(17, 27, 22, 23);
+Backward backward(17, 27, 22, 23);
+TurnLeft left(17, 27, 22, 23);
+TurnRight right(17, 27, 22, 23);
+
+UltrasonicSensor sensorLeft(5, 6), sensorFront(13, 19), sensorRight(20, 21);
+IRSensor leftIR(16), rightIR(26);
+
+// -------- IR Control Logic --------
+void IR_control() {
+    if (leftIR.isObstacleDetected() && !rightIR.isObstacleDetected()) {
+        cout << "Left IR detected an obstacle, turning right." << endl;
+        right.move();
+        usleep(500000);
+    } else if (rightIR.isObstacleDetected() && !leftIR.isObstacleDetected()) {
+        cout << "Right IR detected an obstacle, turning left." << endl;
+        left.move();
+        usleep(500000);
+    } else if (leftIR.isObstacleDetected() && rightIR.isObstacleDetected()) {
+        cout << "Both IR sensors detected obstacles, moving backward." << endl;
+        backward.move();
+        usleep(500000);
+    }
+}
+
+// -------- Self-driving Logic --------
+void self_driving() {
+    float distanceLeft = sensorLeft.getDistance();
+    float distanceFront = sensorFront.getDistance();
+    float distanceRight = sensorRight.getDistance();
+
+    cout << "Front: " << distanceFront
+         << " Left: " << distanceLeft
+         << " Right: " << distanceRight << endl;
+
+    // If front is clear
+    if (distanceFront > 30) {
+        forward.move();
+    } else {
+        // Obstacle ahead: back and decide direction
+        backward.move();
+        usleep(500000);
+        backward.stop();
+        usleep(200000);
+
+        if (distanceLeft > 40 && distanceRight < 30) {
+            left.move();
+            usleep(700000);
+        } else if (distanceRight > 40 && distanceLeft < 30) {
+            right.move();
+            usleep(700000);
+        } else if (distanceLeft > 30 && distanceRight > 30) {
+            if (distanceLeft > distanceRight) {
+                left.move();
+                usleep(700000);
+            } else {
+                right.move();
+                usleep(700000);
+            }
+        } else {
+            // Stuck condition
+            backward.move();
+            usleep(800000);
+        }
+    }
+
+    // Check IR sensors for side obstacle avoidance
+    IR_control();
+}
+
+// -------- Main Program --------
+int main() {
+    // Initialize GPIO
+    if (gpioInitialise() < 0) {
+        cerr << "Failed to initialize GPIO." << endl;
+        return 1;
+    }
+
+    // Set motor pins as output
+    gpioSetMode(17, PI_OUTPUT);
+    gpioSetMode(27, PI_OUTPUT);
+    gpioSetMode(22, PI_OUTPUT);
+    gpioSetMode(23, PI_OUTPUT);
+
+    // Initialize sensors
+    sensorLeft.init();
+    sensorFront.init();
+    sensorRight.init();
+    leftIR.init();
+    rightIR.init();
+
+    // Main driving loop
+    while (true) {
+        self_driving();
+        usleep(100000); // Small delay
+    }
+
+    gpioTerminate();
+    return 0;
+}
