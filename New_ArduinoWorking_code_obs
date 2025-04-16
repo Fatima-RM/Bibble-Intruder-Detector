@@ -1,0 +1,199 @@
+// ========== Motor Base (Abstraction & Polymorphism) ==========
+class MotorBase {
+protected:
+    int pin1, pin2, pin3, pin4;
+
+public:
+    MotorBase(int p1, int p2, int p3, int p4)
+        : pin1(p1), pin2(p2), pin3(p3), pin4(p4) {}
+
+    virtual ~MotorBase() {}
+    virtual void move() = 0;
+    void stop() {
+        digitalWrite(pin1, LOW);
+        digitalWrite(pin2, LOW);
+        digitalWrite(pin3, LOW);
+        digitalWrite(pin4, LOW);
+    }
+};
+
+// ========== Movement Directions ==========
+class Forward : public MotorBase {
+public:
+    Forward(int p1, int p2, int p3, int p4) : MotorBase(p1, p2, p3, p4) {}
+    void move() override {
+        digitalWrite(pin1, LOW);
+        digitalWrite(pin2, HIGH);
+        digitalWrite(pin3, HIGH);
+        digitalWrite(pin4, LOW);
+        Serial.println("→ Moving Forward");
+    }
+};
+
+class Backward : public MotorBase {
+public:
+    Backward(int p1, int p2, int p3, int p4) : MotorBase(p1, p2, p3, p4) {}
+    void move() override {
+        digitalWrite(pin1, HIGH);
+        digitalWrite(pin2, LOW);
+        digitalWrite(pin3, LOW);
+        digitalWrite(pin4, HIGH);
+        Serial.println("← Moving Backward");
+    }
+};
+
+class TurnLeft : public MotorBase {
+public:
+    TurnLeft(int p1, int p2, int p3, int p4) : MotorBase(p1, p2, p3, p4) {}
+    void move() override {
+        digitalWrite(pin1, LOW);
+        digitalWrite(pin2, HIGH);
+        digitalWrite(pin3, LOW);
+        digitalWrite(pin4, HIGH);
+        Serial.println("↺ Turning Left");
+    }
+};
+
+class TurnRight : public MotorBase {
+public:
+    TurnRight(int p1, int p2, int p3, int p4) : MotorBase(p1, p2, p3, p4) {}
+    void move() override {
+        digitalWrite(pin1, HIGH);
+        digitalWrite(pin2, LOW);
+        digitalWrite(pin3, HIGH);
+        digitalWrite(pin4, LOW);
+        Serial.println("↻ Turning Right");
+    }
+};
+
+// ========== Ultrasonic Sensor ==========
+class UltrasonicSensor {
+private:
+    int trig, echo;
+
+public:
+    UltrasonicSensor(int t, int e) : trig(t), echo(e) {}
+
+    void init() {
+        pinMode(trig, OUTPUT);
+        pinMode(echo, INPUT);
+    }
+
+    float getDistance() {
+        digitalWrite(trig, LOW);
+        delayMicroseconds(2);
+        digitalWrite(trig, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(trig, LOW);
+        long duration = pulseIn(echo, HIGH, 15000); // 15ms timeout
+        float distance = duration * 0.034 / 2;
+        return distance;
+    }
+};
+
+// ========== IR Sensor ==========
+class IRSensor {
+private:
+    int pin;
+
+public:
+    IRSensor(int p) : pin(p) {}
+
+    void init() {
+        pinMode(pin, INPUT);
+    }
+
+    bool isObstacleDetected() {
+        return digitalRead(pin) == LOW;
+    }
+};
+
+// ========== Motor & Sensor Objects ==========
+Forward forward(3, 6, 9, 10);
+Backward backward(3, 6, 9, 10);
+TurnLeft left(3, 6, 9, 10);
+TurnRight right(3, 6, 9, 10);
+
+UltrasonicSensor sensorLeft(2, 4), sensorFront(7, 8), sensorRight(A0, A1);
+IRSensor leftIR(A2), rightIR(A3);
+
+// ========== Setup ==========
+void setup() {
+    Serial.begin(9600);
+
+    // Motor pins
+    pinMode(3, OUTPUT);
+    pinMode(6, OUTPUT);
+    pinMode(9, OUTPUT);
+    pinMode(10, OUTPUT);
+
+    // Init Sensors
+    sensorLeft.init();
+    sensorFront.init();
+    sensorRight.init();
+    leftIR.init();
+    rightIR.init();
+
+    Serial.println("Robot Initialized...");
+}
+
+// ========== Main Loop ==========
+void loop() {
+    navigate();
+}
+
+// ========== Main Navigation Function ==========
+void navigate() {
+    forward.stop(); // stop before reading
+
+    float dFront = sensorFront.getDistance();
+    float dLeft = sensorLeft.getDistance();
+    float dRight = sensorRight.getDistance();
+
+    Serial.print("Front: "); Serial.print(dFront);
+    Serial.print(" | Left: "); Serial.print(dLeft);
+    Serial.print(" | Right: "); Serial.println(dRight);
+
+    if (dFront > 40) {
+        forward.move();
+        delay(200);
+    } else {
+        backward.move();
+        delay(300);
+        backward.stop();
+        delay(100);
+
+        if (dLeft > dRight && dLeft > 30) {
+            left.move();
+            delay(600);
+        } else if (dRight > 30) {
+            right.move();
+            delay(600);
+        } else {
+            backward.move();
+            delay(500);
+        }
+    }
+
+    handleIR();  // IR tuning
+}
+
+// ========== IR Obstacle Handling ==========
+void handleIR() {
+    bool leftBlocked = leftIR.isObstacleDetected();
+    bool rightBlocked = rightIR.isObstacleDetected();
+
+    if (leftBlocked && !rightBlocked) {
+        Serial.println("↻ IR Left Blocked — Turning Right");
+        right.move();
+        delay(500);
+    } else if (rightBlocked && !leftBlocked) {
+        Serial.println("↺ IR Right Blocked — Turning Left");
+        left.move();
+        delay(500);
+    } else if (leftBlocked && rightBlocked) {
+        Serial.println("↩ IR Both Blocked — Backing Up");
+        backward.move();
+        delay(500);
+    }
+}
