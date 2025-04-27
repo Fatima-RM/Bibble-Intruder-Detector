@@ -170,6 +170,7 @@ void navigate() {
     // SAFETY THRESHOLDS
     const float SAFE_DISTANCE = 30.0;    // Move freely if > 30 cm
     const float EMERGENCY_STOP = 20.0;   // Stop immediately if < 20 cm
+    const float TOO_CLOSE = 15.0;        // Very close to stop and move back
 
     if (dFront > SAFE_DISTANCE) {
         forward.move();
@@ -180,21 +181,21 @@ void navigate() {
         forward.move();
         delay(50);
         forward.stop();
-    } else {
-        // Very close - need to back off
+    } else if (dFront < TOO_CLOSE) {
+        // Very close - need to back off more
         backward.move();
-        delay(300);
+        delay(400);
         backward.stop();
         delay(100);
 
-        // Choose better side
+        // Choose better side to turn or move around
         if (dLeft > dRight && dLeft > 25) {
             left.move();
-            delay(600);
+            delay(700);
             left.stop();
         } else if (dRight > 25) {
             right.move();
-            delay(600);
+            delay(700);
             right.stop();
         } else {
             // No good side, move back more
