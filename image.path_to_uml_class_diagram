@@ -1,0 +1,52 @@
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width"/><title>Not Found | Easy-Peasy.AI</title><meta name="robots" content="follow, index"/><meta content="" name="description"/><link rel="canonical" href="https://easy-peasy.ai/404"/><meta property="og:type" content="website"/><meta property="og:site_name" content="Easy-Peasy.AI"/><meta property="og:description" content=""/><meta property="og:title" content="Not Found | Easy-Peasy.AI"/><meta name="image" property="og:image" content=""/><meta name="twitter:card" content="summary_large_image"/><meta name="twitter:site" content="@easy_peasy_ai"/><meta name="twitter:title" content="Not Found | Easy-Peasy.AI"/><meta name="twitter:description" content=""/><meta name="twitter:image" content=""/><link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96"/><link rel="icon" type="image/svg+xml" href="/favicon.svg"/><link rel="shortcut icon" href="/favicon/favicon.ico"/><link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png"/><meta name="apple-mobile-web-app-title" content="Easy-Peasy"/><link rel="manifest" href="/site.webmanifest"/><meta name="msapplication-TileColor" content="#ffffff"/><meta name="msapplication-TileImage" content="/favicon/ms-icon-144x144.png"/><meta name="theme-color" content="#ffffff"/><link rel="alternate" href="https://easy-peasy.ai/404" hrefLang="x-default"/><link rel="alternate" href="https://easy-peasy.ai/ja/404" hrefLang="ja"/><link rel="alternate" href="https://easy-peasy.ai/es/404" hrefLang="es"/><link rel="alternate" href="https://easy-peasy.ai/fr/404" hrefLang="fr"/><link rel="alternate" href="https://easy-peasy.ai/it/404" hrefLang="it"/><link rel="alternate" href="https://easy-peasy.ai/de/404" hrefLang="de"/><link rel="alternate" href="https://easy-peasy.ai/ko/404" hrefLang="ko"/><link rel="alternate" href="https://easy-peasy.ai/zh/404" hrefLang="zh"/><link rel="alternate" href="https://easy-peasy.ai/th/404" hrefLang="th"/><link rel="alternate" href="https://easy-peasy.ai/ar/404" hrefLang="ar"/><link rel="alternate" href="https://easy-peasy.ai/pt/404" hrefLang="pt"/><meta name="next-head-count" content="36"/><link rel="preload" href="/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous"/><script>
+  let mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+
+  function updateTheme(savedTheme) {
+    let theme = 'system'
+    try {
+      if (!savedTheme) {
+        savedTheme = window.localStorage.theme
+      }
+      if (savedTheme === 'dark') {
+        theme = 'dark'
+        document.documentElement.classList.add('dark')
+      } else if (savedTheme === 'light') {
+        theme = 'light'
+        document.documentElement.classList.remove('dark')
+      } else if (mediaQuery.matches) {
+        theme = 'dark'
+        document.documentElement.classList.add('dark')
+      } else {
+        theme = 'light'
+        document.documentElement.classList.remove('dark')
+      }
+    } catch {
+      theme = 'light'
+      document.documentElement.classList.remove('dark')
+    }
+    return theme
+  }
+
+  function updateThemeWithoutTransitions(savedTheme) {
+    updateTheme(savedTheme)
+    document.documentElement.classList.add('[&_*]:!transition-none')
+    window.setTimeout(() => {
+      document.documentElement.classList.remove('[&_*]:!transition-none')
+    }, 0)
+  }
+
+  document.documentElement.setAttribute('data-theme', updateTheme())
+
+  new MutationObserver(([{ oldValue }]) => {
+    let newValue = document.documentElement.getAttribute('data-theme')
+    if (newValue !== oldValue) {
+      try {
+        window.localStorage.setItem('theme', newValue)
+      } catch {}
+      updateThemeWithoutTransitions(newValue)
+    }
+  }).observe(document.documentElement, { attributeFilter: ['data-theme'], attributeOldValue: true })
+
+  mediaQuery.addEventListener('change', updateThemeWithoutTransitions)
+  window.addEventListener('storage', updateThemeWithoutTransitions)
+</script><link rel="preload" href="/_next/static/css/52bb61c6ed89c349.css" as="style"/><link rel="stylesheet" href="/_next/static/css/52bb61c6ed89c349.css" data-n-g=""/><noscript data-n-css=""></noscript><script defer="" nomodule="" src="/_next/static/chunks/polyfills-42372ed130431b0a.js"></script><script src="/_next/static/chunks/webpack-d0cecacf37dffad6.js" defer=""></script><script src="/_next/static/chunks/framework-03d2d6bafaacb93f.js" defer=""></script><script src="/_next/static/chunks/main-3173c655cfb8e2eb.js" defer=""></script><script src="/_next/static/chunks/pages/_app-2e3c4bd91b20fb87.js" defer=""></script><script src="/_next/static/chunks/e21e5bbe-56e5feca7d8ae073.js" defer=""></script><script src="/_next/static/chunks/81629-b1e7326344ae457d.js" defer=""></script><script src="/_next/static/chunks/pages/404-36a0620962d408ec.js" defer=""></script><script src="/_next/static/n0NlWFyQuzLHQgyk6rJtF/_buildManifest.js" defer=""></script><script src="/_next/static/n0NlWFyQuzLHQgyk6rJtF/_ssgManifest.js" defer=""></script></head><body><div id="__next"><main><section class="bg-white"><div class="layout flex min-h-screen flex-col items-center justify-center text-center text-black"><svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 24 24" class="drop-shadow-glow animate-flicker text-red-500" height="60" width="60" xmlns="http://www.w3.org/2000/svg"><path d="M4.00098 20V14C4.00098 9.58172 7.5827 6 12.001 6C16.4193 6 20.001 9.58172 20.001 14V20H21.001V22H3.00098V20H4.00098ZM6.00098 14H8.00098C8.00098 11.7909 9.79184 10 12.001 10V8C8.68727 8 6.00098 10.6863 6.00098 14ZM11.001 2H13.001V5H11.001V2ZM19.7792 4.80761L21.1934 6.22183L19.0721 8.34315L17.6578 6.92893L19.7792 4.80761ZM2.80859 6.22183L4.22281 4.80761L6.34413 6.92893L4.92991 8.34315L2.80859 6.22183Z"></path></svg><h1 class="mt-8 text-4xl md:text-6xl">Page Not Found</h1><a class="animated-underline custom-link inline-flex items-center font-semibold focus:outline-none focus-visible:rounded focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-offset-2 group gap-[0.25em] mt-4 md:text-lg" href="/"><span>Back to Home</span><svg viewBox="0 0 16 16" height="1em" width="1em" fill="none" xmlns="http://www.w3.org/2000/svg" class="relative transition-transform duration-200 motion-safe:-translate-x-1 group-hover:translate-x-0"><path fill="currentColor" d="M7.28033 3.21967C6.98744 2.92678 6.51256 2.92678 6.21967 3.21967C5.92678 3.51256 5.92678 3.98744 6.21967 4.28033L7.28033 3.21967ZM11 8L11.5303 8.53033C11.8232 8.23744 11.8232 7.76256 11.5303 7.46967L11 8ZM6.21967 11.7197C5.92678 12.0126 5.92678 12.4874 6.21967 12.7803C6.51256 13.0732 6.98744 13.0732 7.28033 12.7803L6.21967 11.7197ZM6.21967 4.28033L10.4697 8.53033L11.5303 7.46967L7.28033 3.21967L6.21967 4.28033ZM10.4697 7.46967L6.21967 11.7197L7.28033 12.7803L11.5303 8.53033L10.4697 7.46967Z"></path><path stroke="currentColor" d="M1.75 8H11" stroke-width="1.5" stroke-linecap="round" class="origin-left transition-all duration-200 opacity-0 motion-safe:-translate-x-1 group-hover:translate-x-0 group-hover:opacity-100"></path></svg></a></div></section></main><div class="Toastify"></div></div><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"__lang":"en","__namespaces":{"common":{},"cookie":{"title":"We use cookies","description":"By clicking \"Accept all\", you agree to the storing of cookies on your device for functional, analytics, and advertising purposes.","acceptAll":"Accept all","rejectAll":"Reject all","privacyPolicy":"See our privacy policy"}}},"__N_SSG":true},"page":"/404","query":{},"buildId":"n0NlWFyQuzLHQgyk6rJtF","isFallback":false,"gsp":true,"locale":"en","locales":["en","ja","es","fr","it","de","ko","zh","th","ar","pt"],"defaultLocale":"en","scriptLoader":[]}</script></body></html>
