@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 // ========== Motor Base (Abstraction & Polymorphism) ==========
 class MotorBase {
 protected:
@@ -109,23 +111,34 @@ public:
 };
 
 // ========== Motor & Sensor Objects ==========
-Forward forward(3, 6, 9, 10);
-Backward backward(3, 6, 9, 10);
-TurnLeft left(3, 6, 9, 10);
-TurnRight right(3, 6, 9, 10);
+// Motor Driver Pins: IN1 -> 24, IN2 -> 25, IN3 -> 23, IN4 -> 22
+Forward forward(24, 25, 23, 22);
+Backward backward(24, 25, 23, 22);
+TurnLeft left(24, 25, 23, 22);
+TurnRight right(24, 25, 23, 22);
 
-UltrasonicSensor sensorLeft(2, 4), sensorFront(7, 8), sensorRight(A0, A1);
-IRSensor leftIR(A2), rightIR(A3);
+// Ultrasonic Sensors Pins
+UltrasonicSensor sensorFront(28, 29);
+UltrasonicSensor sensorLeft(30, 31);
+UltrasonicSensor sensorRight(32, 33);
+
+// IR Sensors Pins
+IRSensor leftIR(26);
+IRSensor rightIR(27);
+
+// ========== Function Prototypes ==========
+void navigate();
+void handleIR();
 
 // ========== Setup ==========
 void setup() {
     Serial.begin(9600);
 
     // Motor pins
-    pinMode(3, OUTPUT);
-    pinMode(6, OUTPUT);
-    pinMode(9, OUTPUT);
-    pinMode(10, OUTPUT);
+    pinMode(24, OUTPUT);
+    pinMode(25, OUTPUT);
+    pinMode(23, OUTPUT);
+    pinMode(22, OUTPUT);
 
     // Init Sensors
     sensorLeft.init();
@@ -142,7 +155,7 @@ void loop() {
     navigate();
 }
 
-// ========== Main Navigation Function ==========
+// ========== Navigation ==========
 void navigate() {
     forward.stop(); // stop before reading
 
@@ -154,26 +167,42 @@ void navigate() {
     Serial.print(" | Left: "); Serial.print(dLeft);
     Serial.print(" | Right: "); Serial.println(dRight);
 
-if (dFront > 30) {
-    forward.move();
-    delay(200);
-} else {
-    backward.move();
-    delay(300);
-    backward.stop();
-    delay(100);
+    // SAFETY THRESHOLDS
+    const float SAFE_DISTANCE = 30.0;    // Move freely if > 30 cm
+    const float EMERGENCY_STOP = 20.0;   // Stop immediately if < 20 cm
 
-    if (dLeft > dRight && dLeft > 25) {
-        left.move();
-        delay(600);
-    } else if (dRight > 25) {
-        right.move();
-        delay(600);
+    if (dFront > SAFE_DISTANCE) {
+        forward.move();
+        delay(100); // Shorter step
+        forward.stop();
+    } else if (dFront > EMERGENCY_STOP) {
+        // Object getting close, slow down or prepare to turn
+        forward.move();
+        delay(50);
+        forward.stop();
     } else {
+        // Very close - need to back off
         backward.move();
-        delay(500);
+        delay(300);
+        backward.stop();
+        delay(100);
+
+        // Choose better side
+        if (dLeft > dRight && dLeft > 25) {
+            left.move();
+            delay(600);
+            left.stop();
+        } else if (dRight > 25) {
+            right.move();
+            delay(600);
+            right.stop();
+        } else {
+            // No good side, move back more
+            backward.move();
+            delay(500);
+            backward.stop();
+        }
     }
-}
 
     handleIR();  // IR tuning
 }
