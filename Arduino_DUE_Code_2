@@ -1,22 +1,32 @@
 #include <Arduino.h>
 #include <NewPing.h>
+#include <stdlib.h> // For random number generation
 
-// ========== HARDWARE CONFIGURATION ==========
-constexpr uint8_t MOTOR_PINS[4]  = {22, 23, 24, 25};   // IN1, IN2, IN3, IN4 (L293D)
-constexpr uint8_t US_PINS[3][2]  = {{30,31}, {28,29}, {32,33}}; // Left, Front, Right
-constexpr uint8_t IR_PINS[2]     = {26, 27};           // Left, Right
-constexpr uint16_t MAX_DISTANCE  = 200;               // cm
+// ========== PIN DEFINITIONS ==========
 
-// ========== SAFETY CONSTANTS ==========
-constexpr uint16_t OBSTACLE_DISTANCE = 30;   // cm, “too close”
-constexpr uint16_t TURNING_DISTANCE  = 40;   // cm, “allow turn”
-constexpr uint16_t REVERSE_TIME      = 300;  // ms
-constexpr uint16_t TURN_TIME         = 500;  // ms
-constexpr uint16_t SAMPLE_INTERVAL   = 50;   // ms
+// Motor driver pins (connected to L298N or similar)
+constexpr uint8_t MOTOR_PINS[4] = {22, 23, 24, 25};
 
-// ========== MOTOR CONTROLLER ==========
+// Ultrasonic sensor pins: {Trig, Echo} for Left, Front, Right
+constexpr uint8_t US_PINS[3][2] = {{30, 31}, {28, 29}, {32, 33}};
+
+// IR sensor pins (Left and Right)
+constexpr uint8_t IR_PINS[2] = {26, 27};
+
+// ========== CONFIGURATION CONSTANTS ==========
+
+constexpr uint16_t MAX_DISTANCE = 200;      // Max distance for ultrasonic sensors
+constexpr uint16_t OBSTACLE_DISTANCE = 30;  // Distance threshold for obstacle detection
+constexpr uint16_t TURNING_DISTANCE = 40;   // Distance threshold for allowing turn
+constexpr uint16_t REVERSE_TIME = 300;      // Time to reverse (milliseconds)
+constexpr uint16_t TURN_TIME = 500;         // Time to turn (milliseconds)
+constexpr uint16_t SAMPLE_INTERVAL = 50;    // Time between sensor readings (milliseconds)
+constexpr uint8_t MAX_REVERSE_ATTEMPTS = 3; // Max reverses before random escape
+
+// ========== MOTOR CONTROLLER CLASS ==========
+
 class MotorController {
-  const uint8_t* pins;
+  const uint8_t pins[4];
   uint8_t state = 0;
 
   void apply() {
@@ -27,11 +37,8 @@ class MotorController {
 
 public:
   MotorController(const uint8_t mp[4])
-    : pins(mp)
-  {
-    for (uint8_t i = 0; i < 4; ++i) {
-      pinMode(pins[i], OUTPUT);
-    }
+    : pins{mp[0], mp[1], mp[2], mp[3]} {
+    for (auto p : pins) pinMode(p, OUTPUT);
     stop();
   }
 
@@ -42,7 +49,8 @@ public:
   void stop()     { state = 0b0000; apply(); }
 };
 
-// ========== SENSOR ARRAY ==========
+// ========== SENSOR ARRAY CLASS ==========
+
 class SensorArray {
   NewPing sonar[3];
   uint8_t irPins[2];
@@ -52,18 +60,17 @@ class SensorArray {
 
 public:
   struct Data {
-    uint16_t dist[3];  // distances: left, front, right
-    bool     ir[2];    // IR sensors: left, right
+    uint16_t dist[3];
+    bool     ir[2];
   };
 
   SensorArray()
     : sonar{
-        NewPing(US_PINS[0][0], US_PINS[0][1], MAX_DISTANCE),
-        NewPing(US_PINS[1][0], US_PINS[1][1], MAX_DISTANCE),
-        NewPing(US_PINS[2][0], US_PINS[2][1], MAX_DISTANCE)
-      },
-      irPins{ IR_PINS[0], IR_PINS[1] }
-  {
+      NewPing(US_PINS[0][0], US_PINS[0][1], MAX_DISTANCE),
+      NewPing(US_PINS[1][0], US_PINS[1][1], MAX_DISTANCE),
+      NewPing(US_PINS[2][0], US_PINS[2][1], MAX_DISTANCE)
+    },
+    irPins{IR_PINS[0], IR_PINS[1]} {
     for (auto p : irPins) pinMode(p, INPUT);
 
     for (auto& sensor : bufUS)
@@ -77,7 +84,7 @@ public:
 
     if (now - lastSample >= SAMPLE_INTERVAL) {
       lastSample = now;
-      
+
       for (uint8_t s = 0; s < 3; s++) {
         auto r = sonar[s].ping_cm();
         bufUS[s][idxUS] = (r == 0) ? MAX_DISTANCE : r;
@@ -102,25 +109,32 @@ public:
   }
 };
 
-// ========== NAVIGATION CONTROLLER ==========
+// ========== NAVIGATION SYSTEM CLASS ==========
+
 class NavigationSystem {
   MotorController& motors;
-  SensorArray&     sensors;
+  SensorArray& sensors;
 
-  enum State { IDLE, MOVING, REV, AVOID };
+  enum State { IDLE, MOVING, AVOID, REV };
   State st = IDLE;
   uint32_t actionTs = 0;
+  uint8_t reverseAttempts = 0;
 
   bool safeAhead(uint16_t d) const { return d > OBSTACLE_DISTANCE; }
   bool canTurn(uint16_t d) const { return d > TURNING_DISTANCE; }
 
-  // Overloaded debugPrint functions for both RAM and Flash strings
-  void debugPrint(const char* msg) {
-    Serial.println(msg);
-  }
-
   void debugPrint(const __FlashStringHelper* msg) {
-    Serial.println(msg);
+  Serial.println(msg);
+}
+
+
+  void printSensorData(const SensorArray::Data& D) {
+    Serial.print("Distances (L,F,R): ");
+    Serial.print(D.dist[0]); Serial.print(", ");
+    Serial.print(D.dist[1]); Serial.print(", ");
+    Serial.print(D.dist[2]); Serial.print(" | IR (L,R): ");
+    Serial.print(D.ir[0]); Serial.print(", ");
+    Serial.println(D.ir[1]);
   }
 
 public:
@@ -131,6 +145,8 @@ public:
     auto D = sensors.read();
     uint32_t now = millis();
 
+    printSensorData(D);
+
     switch (st) {
       case IDLE:
         if (!safeAhead(D.dist[1])) {
@@ -138,16 +154,55 @@ public:
           debugPrint(F(">>> IDLE → REVERSING"));
         } else {
           st = MOVING; actionTs = now; motors.forward();
-          debugPrint(F(">>> IDLE → MOVING"));
+          debugPrint(F(">>> IDLE → MOVING FORWARD"));
         }
         break;
 
       case MOVING:
-        if (!safeAhead(D.dist[1]) || D.ir[0] || D.ir[1]) {
-          st = REV;  actionTs = now; motors.backward();
-          debugPrint(F(">>> MOVING → REVERSING"));
-        }
-        break;
+  // If there's an obstacle ahead or IR sensors detect an obstruction, start reversing
+  if (!safeAhead(D.dist[1]) || D.ir[0] || D.ir[1]) {
+    st = REV;  actionTs = now; motors.backward();
+    debugPrint(F(">>> MOVING → REVERSING"));
+  }
+  else {
+    // Check if there's an object on the left side
+    if (D.dist[0] < OBSTACLE_DISTANCE) {
+      // Turn right if there's an obstacle on the left
+      if (D.dist[0] < OBSTACLE_DISTANCE / 2) {
+        motors.turnRight();  // Sharper turn if the obstacle is very close
+        debugPrint(F(">>> MOVING → TURN RIGHT (Sharp, Obstacle on Left)"));
+      } else {
+        motors.turnRight();  // Slight turn if the obstacle is farther
+        debugPrint(F(">>> MOVING → TURN RIGHT (Obstacle on Left)"));
+      }
+    }
+    // Check if there's an object on the right side
+    else if (D.dist[2] < OBSTACLE_DISTANCE) {
+      // Turn left if there's an obstacle on the right
+      if (D.dist[2] < OBSTACLE_DISTANCE / 2) {
+        motors.turnLeft();  // Sharper turn if the obstacle is very close
+        debugPrint(F(">>> MOVING → TURN LEFT (Sharp, Obstacle on Right)"));
+      } else {
+        motors.turnLeft();  // Slight turn if the obstacle is farther
+        debugPrint(F(">>> MOVING → TURN LEFT (Obstacle on Right)"));
+      }
+    }
+    // Check if there's an obstacle in front
+    else if (D.dist[1] < OBSTACLE_DISTANCE + 10) {  // Adding more buffer for front sensor
+      motors.stop();  // Stop immediately when an obstacle is detected in front
+      delay(200);      // Delay for stabilization and to avoid collision
+      st = REV;       // Move to reverse state to prevent striking the obstacle
+      actionTs = now;
+      debugPrint(F(">>> MOVING → STOPPED (Object Too Close in Front)"));
+    }
+    // If no obstacles, continue moving forward
+    else {
+      motors.forward();
+      debugPrint(F(">>> MOVING → MOVING FORWARD"));
+    }
+  }
+  break;
+
 
       case REV:
         if (now - actionTs >= REVERSE_TIME) {
@@ -155,23 +210,35 @@ public:
           bool R = canTurn(D.dist[2]) && !D.ir[1];
 
           if (L && R) {
-            if (D.dist[0] > D.dist[2]) {
-              motors.turnLeft();
-              debugPrint(F(">>> TURN LEFT (both OK)"));
-            } else {
-              motors.turnRight();
-              debugPrint(F(">>> TURN RIGHT (both OK)"));
-            }
-          } else if (L) {
+            if (D.dist[0] > D.dist[2]) { motors.turnLeft(); debugPrint(F(">>> TURN LEFT (both OK)")); }
+            else                      { motors.turnRight(); debugPrint(F(">>> TURN RIGHT (both OK)")); }
+            reverseAttempts = 0;
+          }
+          else if (L) {
             motors.turnLeft();
             debugPrint(F(">>> TURN LEFT"));
-          } else if (R) {
+            reverseAttempts = 0;
+          }
+          else if (R) {
             motors.turnRight();
             debugPrint(F(">>> TURN RIGHT"));
-          } else {
+            reverseAttempts = 0;
+          }
+          else {
+            reverseAttempts++;
+            debugPrint(F(">>> FULL REVERSE (no clear way)"));
+
+            if (reverseAttempts >= MAX_REVERSE_ATTEMPTS) {
+              debugPrint(F(">>> AGGRESSIVE ESCAPE MODE!"));
+              if (random(0, 2)) motors.turnLeft();
+              else              motors.turnRight();
+              st = AVOID; actionTs = now;
+              reverseAttempts = 0;
+              return;
+            }
+
             st = REV; actionTs = now; motors.backward();
-            debugPrint(F(">>> FULL REVERSE (no way to turn)"));
-            break;
+            return;
           }
 
           st = AVOID; actionTs = now;
@@ -181,7 +248,7 @@ public:
       case AVOID:
         if (now - actionTs >= TURN_TIME) {
           st = MOVING; actionTs = now; motors.forward();
-          debugPrint(F(">>> AVOID → MOVING"));
+          debugPrint(F(">>> AVOID → MOVING FORWARD"));
         }
         break;
     }
@@ -189,14 +256,18 @@ public:
 };
 
 // ========== GLOBAL OBJECTS ==========
+
 MotorController motors(MOTOR_PINS);
-SensorArray     sensors;
+SensorArray sensors;
 NavigationSystem nav(motors, sensors);
+
+// ========== SETUP AND LOOP ==========
 
 void setup() {
   Serial.begin(115200);
-  // Remove while(!Serial); if using Uno/Mega/Nano
-  Serial.println(F(">> Robot System Ready!"));
+  while (!Serial); // Wait for Serial Monitor connection
+  Serial.println(F(">> Bibble v2.0 - System Booted Successfully!"));
+  randomSeed(analogRead(A0));  // Better random number generation
 }
 
 void loop() {
