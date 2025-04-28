@@ -1,0 +1,62 @@
+// Define the PIR sensor pins
+const int pirSensor1 = 35;  // PIR sensor 1 at front-left corner
+const int pirSensor2 = 34;  // PIR sensor 2 at front-right corner
+
+// Define a variable to track the motion state
+bool motionDetected = false;
+
+// Timing variables
+unsigned long motionTime = 0;  // Store time when motion is detected
+const unsigned long taskDuration = 10000; // 10 seconds for other tasks
+
+// Debounce timing
+unsigned long debounceTime = 0;
+const unsigned long debounceDelay = 1000; // 1 second debounce time
+
+void setup() {
+  // Initialize the PIR sensor pins as input
+  pinMode(pirSensor1, INPUT);
+  pinMode(pirSensor2, INPUT);
+  
+  // Start serial communication for debugging
+  Serial.begin(9600);
+  
+  // Wait a little for PIR sensors to stabilize
+  delay(5000); // Allow 5 seconds for PIR sensors to settle
+}
+
+void loop() {
+  // Read PIR sensors with debouncing
+  bool sensor1 = digitalRead(pirSensor1);
+  bool sensor2 = digitalRead(pirSensor2);
+  
+  // If debounce period has passed, check for motion
+  if (millis() - debounceTime > debounceDelay) {
+    if (sensor1 == HIGH || sensor2 == HIGH) {
+      if (!motionDetected) {
+        // Motion detected, start timer and set motionDetected flag
+        motionDetected = true;
+        motionTime = millis();  // Record the current time
+        Serial.println("Motion detected! Starting other tasks.");
+        // Disable PIR sensors by just checking motion once (no further motion check for 10 seconds)
+      }
+    }
+    debounceTime = millis();  // Update the debounce time
+  }
+
+  // If motion was detected, do other tasks for 10 seconds
+  if (motionDetected && (millis() - motionTime < taskDuration)) {
+    // Do the other tasks here (e.g., temporary actions, stopping motors)
+    Serial.println("Performing other tasks for 10 seconds...");
+    // Example of other tasks (replace this with actual task logic)
+    // Example: Stop the motors or do any other action for 10 seconds
+  } else if (motionDetected && (millis() - motionTime >= taskDuration)) {
+    // After 10 seconds, stop other tasks and check for motion again
+    motionDetected = false;
+    Serial.println("10 seconds passed. Stopping tasks and resuming motion sensing.");
+    // Reset the task and go back to sensing for motion
+  }
+
+  // Add a small delay to prevent unnecessary CPU usage
+  delay(100); // Just to give a break to the loop
+}
