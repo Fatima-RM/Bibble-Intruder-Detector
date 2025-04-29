@@ -1,0 +1,299 @@
+// ========== ADVANCED OOP-BASED ROBOTIC SYSTEM ========== 
+#include <Arduino.h>
+#include <NewPing.h>
+#include <stdlib.h>
+
+// Forward declarations
+class MotorController;
+class SensorArray;
+class NavigationSystem;
+
+// ---------------- UTILITY MACROS ----------------
+#define BIT_SET(x, bit) ((x) |= (1UL << (bit)))
+#define BIT_CLEAR(x, bit) ((x) &= ~(1UL << (bit)))
+#define BIT_CHECK(x, bit) (((x) >> (bit)) & 1U)
+
+// ---------------- PIR SENSOR SETUP ----------------
+class PIRSensor {
+  const uint8_t leftPin;
+  const uint8_t rightPin;
+  static const uint32_t debounceDelay = 1000;
+  static const uint32_t taskDuration = 20000;
+  bool motionDetected = false;
+  uint32_t lastMotion = 0;
+  uint32_t debounceTime = 0;
+
+public:
+  PIRSensor(uint8_t l, uint8_t r) : leftPin(l), rightPin(r) {
+    pinMode(leftPin, INPUT);
+    pinMode(rightPin, INPUT);
+    delay(5000);
+    if(Serial) Serial.println("PIR Sensors initialized");
+  }
+
+  bool detected() {
+    uint32_t now = millis();
+    bool sensor1 = digitalRead(leftPin);
+    bool sensor2 = digitalRead(rightPin);
+
+    if (!motionDetected && now - debounceTime > debounceDelay) {
+      if (sensor1 || sensor2) {
+        motionDetected = true;
+        lastMotion = now;
+        if (Serial) {
+          if (sensor1 && !sensor2) Serial.println("Motion on LEFT → Activating...");
+          else if (sensor2 && !sensor1) Serial.println("Motion on RIGHT → Activating...");
+          else Serial.println("Motion AHEAD → Activating...");
+          Serial.println("Robot ACTIVE.");
+        }
+      }
+      debounceTime = now;
+    }
+    if (motionDetected && now - lastMotion >= taskDuration) {
+      motionDetected = false;
+      if(Serial) Serial.println("Time limit reached. Robot IDLE.");
+    }
+    return motionDetected;
+  }
+};
+
+// ---------------- MOTOR CONTROL ----------------
+class MotorController {
+  const uint8_t pins[4];
+  uint8_t state;
+  static int totalMoves;
+
+  void apply() const {
+    for (uint8_t i = 0; i < 4; ++i)
+      digitalWrite(pins[i], (state & (0b1000 >> i)) ? HIGH : LOW);
+  }
+
+public:
+  MotorController(const uint8_t mp[4]) : pins{mp[0], mp[1], mp[2], mp[3]}, state(0) {
+    for (auto p : pins) pinMode(p, OUTPUT);
+    if(Serial) Serial.println("Motor controller initialized");
+  }
+
+  void forward()     { state = 0b0110; apply(); if(Serial) Serial.println("→ Moving Forward"); totalMoves++; }
+  void backward()    { state = 0b1001; apply(); if(Serial) Serial.println("← Reversing"); totalMoves++; }
+  void turnLeft()    { state = 0b0010; apply(); if(Serial) Serial.println("↺ Turning Left"); totalMoves++; }
+  void turnRight()   { state = 0b0100; apply(); if(Serial) Serial.println("↻ Turning Right"); totalMoves++; }
+  void stop()        { state = 0b0000; apply(); if(Serial) Serial.println("■ Motors Stopped"); }
+
+  friend class NavigationSystem;
+
+  static int getTotalMoves() { return totalMoves; }
+};
+
+int MotorController::totalMoves = 0;
+
+// ---------------- SENSOR SYSTEM ----------------
+class SensorArray {
+  NewPing* sonar[3];
+  uint8_t irPins[2];
+  uint32_t lastSample;
+  float bufUS[3][5];
+  uint8_t idxUS;
+
+public:
+  struct Data {
+    uint16_t dist[3];
+    bool     ir[2];
+  };
+
+  SensorArray() : lastSample(0), idxUS(0), irPins{26, 27} {
+    sonar[0] = new NewPing(30, 31, 200);
+    sonar[1] = new NewPing(28, 29, 200);
+    sonar[2] = new NewPing(32, 33, 200);
+    for (auto& p : irPins) pinMode(p, INPUT);
+    memset(bufUS, 0, sizeof(bufUS));
+    if(Serial) Serial.println("Sensor array initialized");
+  }
+
+  Data read() {
+    Data d = {};
+    uint32_t now = millis();
+    if (now - lastSample >= 50) {
+      lastSample = now;
+      for (int i = 0; i < 3; ++i) {
+        uint16_t r = sonar[i]->ping_cm();
+        bufUS[i][idxUS] = (r == 0 ? 200 : r);
+      }
+      idxUS = (idxUS + 1) % 5;
+      for (int i = 0; i < 2; ++i) {
+        bool a = digitalRead(irPins[i]) == LOW;
+        delay(1);
+        bool b = digitalRead(irPins[i]) == LOW;
+        d.ir[i] = a && b;
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      float sum = 0;
+      for (float v : bufUS[i]) sum += v;
+      d.dist[i] = uint16_t(sum / 5);
+    }
+    if(Serial) {
+      Serial.print("[IR Sensors] Left: "); Serial.print(d.ir[0]);
+      Serial.print(" Right: "); Serial.println(d.ir[1]);
+    }
+    return d;
+  }
+
+  ~SensorArray() {
+    for (int i = 0; i < 3; ++i) delete sonar[i];
+  }
+};
+
+// ---------------- ROBOT BASE CLASS ----------------
+class RobotBase {
+public:
+  virtual void update() = 0;
+  virtual ~RobotBase() {}
+};
+
+// ---------------- NAVIGATION SYSTEM ----------------
+class NavigationSystem : public RobotBase {
+  MotorController& motors;
+  SensorArray& sensors;
+
+  enum State { IDLE, MOVING, AVOID, REV } st;
+  uint32_t actionTs;
+  uint8_t reverseAttempts;
+  uint8_t reverseCount;
+  uint32_t lastReverse;
+
+  // Enhanced safety parameters
+  static const uint16_t OBSTACLE_DISTANCE = 40;    // Increased from 30
+  static const uint16_t TURNING_DISTANCE = 50;     // Increased from 40
+  static const uint16_t REVERSE_TIME = 500;        // Increased from 300
+  static const uint16_t TURN_TIME = 800;           // Increased from 500
+  static const uint16_t SAFETY_BUFFER = 10;        // New safety margin
+
+  bool safe(uint16_t d) const { 
+    // Hysteresis for safer forward movement
+    return d > (OBSTACLE_DISTANCE + SAFETY_BUFFER); 
+  }
+
+  bool criticalObstacle(uint16_t d) const {
+    return d < OBSTACLE_DISTANCE;
+  }
+
+public:
+  NavigationSystem(MotorController& m, SensorArray& s) : motors(m), sensors(s), st(IDLE), actionTs(0), reverseAttempts(0), reverseCount(0), lastReverse(0) {
+    if(Serial) Serial.println("Navigation system initialized");
+  }
+
+  void update() override {
+    auto D = sensors.read();
+    uint32_t now = millis();
+    
+    // Progressive braking system
+    if(st == MOVING && D.dist[1] < (OBSTACLE_DISTANCE + 20)) {
+      motors.stop();
+      delay(50);
+      if(Serial) Serial.println("! Proximity Alert: Braking !");
+    }
+
+    switch (st) {
+      case IDLE:
+        if(Serial) Serial.println("State: IDLE");
+        if (criticalObstacle(D.dist[1])) {
+          st = REV; actionTs = now; motors.backward();
+          if(Serial) Serial.println("!! CRITICAL OBSTACLE !!");
+        } else {
+          st = MOVING; actionTs = now; motors.forward();
+        }
+        break;
+
+      case MOVING:
+        if(Serial) Serial.println("State: MOVING");
+        if (criticalObstacle(D.dist[1]) || D.ir[0] || D.ir[1]) {
+          if(Serial) Serial.println("Obstacle/IR → Emergency Reverse");
+          st = REV; actionTs = now; motors.backward();
+        } else if (!safe(D.dist[0])) {
+          if(Serial) Serial.println("Left blocked → Sharp Right");
+          motors.turnRight();
+          delay(150); // Additional turn stabilization
+        } else if (!safe(D.dist[2])) {
+          if(Serial) Serial.println("Right blocked → Sharp Left");
+          motors.turnLeft();
+          delay(150); // Additional turn stabilization
+        } else {
+          motors.forward();
+        }
+        break;
+
+      case REV:
+        if(Serial) Serial.println("State: REVERSING");
+        if (now - actionTs >= REVERSE_TIME) {
+          reverseCount++;
+          if (now - lastReverse > 5000) reverseCount = 0;
+          lastReverse = now;
+
+          if (reverseCount >= 3) {
+            if(Serial) Serial.println("Dead-end! 180° Spin");
+            motors.turnRight(); delay(1200);
+            motors.turnRight(); delay(1200);
+            reverseCount = 0;
+          }
+
+          // Check clearance before turning
+          if (safe(sensors.read().dist[1])) { 
+            if(Serial) Serial.println("Path cleared → Moving");
+            st = MOVING; motors.forward();
+          } else if (reverseAttempts++ < 3) {
+            if(Serial) Serial.println("Avoiding Left");
+            st = AVOID; actionTs = now; motors.turnLeft();
+          } else {
+            if(Serial) Serial.println("Reset → Forward");
+            reverseAttempts = 0;
+            st = MOVING; motors.forward();
+          }
+        }
+        break;
+
+      case AVOID:
+        if(Serial) Serial.println("State: AVOIDING");
+        if (now - actionTs >= TURN_TIME) {
+          if(Serial) Serial.println("Avoidance Complete");
+          st = MOVING; motors.forward();
+        }
+        break;
+    }
+  }
+};
+
+// ---------------- GLOBAL OBJECT POINTERS ----------------
+PIRSensor* pir = nullptr;
+MotorController* motors = nullptr;
+SensorArray* sensors = nullptr;
+NavigationSystem* nav = nullptr;
+
+void setup() {
+  Serial.begin(9600);
+  delay(100); // Allow serial port to initialize
+  
+  // Initialize components in correct order
+  pir = new PIRSensor(35, 34);
+  const uint8_t MOTOR_PINS[4] = {22, 23, 24, 25};
+  motors = new MotorController(MOTOR_PINS);
+  sensors = new SensorArray();
+  nav = new NavigationSystem(*motors, *sensors);
+
+  if(Serial) {
+    Serial.println("\n======= Bibble OOP Bot Booting =======");
+    Serial.println("System initialized. Awaiting motion input...");
+  }
+  motors->stop();
+}
+
+void loop() {
+  if (pir->detected()) {
+    if(Serial) Serial.println("→ Motion Detected: Executing Navigation Update");
+    nav->update();
+  } else {
+    if(Serial) Serial.println("■ No Motion: Motors Stopped");
+    motors->stop();
+  }
+  delay(50);
+}
