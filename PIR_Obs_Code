@@ -27,6 +27,7 @@ constexpr uint16_t REVERSE_TIME = 300;
 constexpr uint16_t TURN_TIME = 500;
 constexpr uint16_t SAMPLE_INTERVAL = 50;
 constexpr uint8_t MAX_REVERSE_ATTEMPTS = 3;
+constexpr uint16_t STABILIZE_DELAY = 5000; // Stabilizing delay after each cycle
 
 // ---------------- MOTOR CONTROL ----------------
 class MotorController {
@@ -194,6 +195,8 @@ void loop() {
     motionDetected = false;
     motors.stop();
     Serial.println("10 seconds passed. Stopping robot, awaiting motion...");
+    Serial.println("Stabilizing sensors...");
+    delay(STABILIZE_DELAY); // Added stabilization delay after motion ends
   }
 
   delay(50);
