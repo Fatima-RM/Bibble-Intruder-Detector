@@ -1,23 +1,36 @@
+// ========== COMBINED PIR + OBSTACLE AVOIDANCE LOGIC ==========
+
 #include <Arduino.h>
 #include <NewPing.h>
+#include <stdlib.h>
 
-// ========== HARDWARE CONFIGURATION ========== 
-constexpr uint8_t MOTOR_PINS[4]  = {22, 23, 24, 25};   // IN1, IN2, IN3, IN4 (L293D)
-constexpr uint8_t US_PINS[3][2]  = {{30,31}, {28,29}, {32,33}}; // Left, Front, Right
-constexpr uint8_t IR_PINS[2]     = {26, 27};           // Left, Right
-constexpr uint8_t PIR_PINS[4]    = {34, 35, 36, 37};   // PIR sensors at corners
-constexpr uint16_t MAX_DISTANCE  = 200;               // cm
+// ---------------- PIR SENSOR SETUP ----------------
+const int pirSensor1 = 35;  // Front-left PIR
+const int pirSensor2 = 34;  // Front-right PIR
 
-// ========== SAFETY CONSTANTS ========== 
-constexpr uint16_t OBSTACLE_DISTANCE = 30;   // cm, “too close”
-constexpr uint16_t TURNING_DISTANCE  = 40;   // cm, “allow turn”
-constexpr uint16_t REVERSE_TIME      = 300;  // ms
-constexpr uint16_t TURN_TIME         = 500;  // ms
-constexpr uint16_t SAMPLE_INTERVAL   = 50;   // ms
+bool motionDetected = false;
+unsigned long motionTime = 0;
+const unsigned long taskDuration = 10000;
+unsigned long debounceTime = 0;
+const unsigned long debounceDelay = 1000;
 
-// ========== MOTOR CONTROLLER ========== 
+// ---------------- PIN DEFINITIONS ----------------
+constexpr uint8_t MOTOR_PINS[4] = {22, 23, 24, 25};
+constexpr uint8_t US_PINS[3][2] = {{30, 31}, {28, 29}, {32, 33}};
+constexpr uint8_t IR_PINS[2] = {26, 27};
+
+// ---------------- CONFIG ----------------
+constexpr uint16_t MAX_DISTANCE = 200;
+constexpr uint16_t OBSTACLE_DISTANCE = 30;
+constexpr uint16_t TURNING_DISTANCE = 40;
+constexpr uint16_t REVERSE_TIME = 300;
+constexpr uint16_t TURN_TIME = 500;
+constexpr uint16_t SAMPLE_INTERVAL = 50;
+constexpr uint8_t MAX_REVERSE_ATTEMPTS = 3;
+
+// ---------------- MOTOR CONTROL ----------------
 class MotorController {
-  const uint8_t* pins;
+  const uint8_t pins[4];
   uint8_t state = 0;
 
   void apply() {
@@ -27,12 +40,8 @@ class MotorController {
   }
 
 public:
-  MotorController(const uint8_t mp[4])
-    : pins(mp)
-  {
-    for (uint8_t i = 0; i < 4; ++i) {
-      pinMode(pins[i], OUTPUT);
-    }
+  MotorController(const uint8_t mp[4]) : pins{mp[0], mp[1], mp[2], mp[3]} {
+    for (auto p : pins) pinMode(p, OUTPUT);
     stop();
   }
 
@@ -43,34 +52,26 @@ public:
   void stop()     { state = 0b0000; apply(); }
 };
 
-// ========== SENSOR ARRAY ========== 
+// ---------------- SENSOR ARRAY ----------------
 class SensorArray {
   NewPing sonar[3];
   uint8_t irPins[2];
-  uint8_t pirPins[4];  // PIR sensor pins
   uint32_t lastSample = 0;
   float bufUS[3][5] = {};
   uint8_t idxUS = 0;
 
 public:
   struct Data {
-    uint16_t dist[3];  // distances: left, front, right
-    bool     ir[2];    // IR sensors: left, right
-    bool     pir[4];   // PIR sensors: 4 corners
+    uint16_t dist[3];
+    bool     ir[2];
   };
 
-  SensorArray()
-    : sonar{
-        NewPing(US_PINS[0][0], US_PINS[0][1], MAX_DISTANCE),
-        NewPing(US_PINS[1][0], US_PINS[1][1], MAX_DISTANCE),
-        NewPing(US_PINS[2][0], US_PINS[2][1], MAX_DISTANCE)
-      },
-      irPins{ IR_PINS[0], IR_PINS[1] },
-      pirPins{ PIR_PINS[0], PIR_PINS[1], PIR_PINS[2], PIR_PINS[3] }
-  {
+  SensorArray() : sonar{
+      NewPing(US_PINS[0][0], US_PINS[0][1], MAX_DISTANCE),
+      NewPing(US_PINS[1][0], US_PINS[1][1], MAX_DISTANCE),
+      NewPing(US_PINS[2][0], US_PINS[2][1], MAX_DISTANCE)},
+    irPins{IR_PINS[0], IR_PINS[1]} {
     for (auto p : irPins) pinMode(p, INPUT);
-    for (auto p : pirPins) pinMode(p, INPUT);
-
     for (auto& sensor : bufUS)
       for (auto& val : sensor)
         val = MAX_DISTANCE;
@@ -82,142 +83,118 @@ public:
 
     if (now - lastSample >= SAMPLE_INTERVAL) {
       lastSample = now;
-      
-      // Reading ultrasonic sensors
       for (uint8_t s = 0; s < 3; s++) {
         auto r = sonar[s].ping_cm();
         bufUS[s][idxUS] = (r == 0) ? MAX_DISTANCE : r;
       }
       idxUS = (idxUS + 1) % 5;
-
-      // Reading IR sensors
       for (uint8_t i = 0; i < 2; i++) {
         bool a = (digitalRead(irPins[i]) == LOW);
         delay(1);
         bool b = (digitalRead(irPins[i]) == LOW);
         out.ir[i] = (a && b);
       }
-
-      // Reading PIR sensors
-      for (uint8_t i = 0; i < 4; i++) {
-        out.pir[i] = (digitalRead(pirPins[i]) == HIGH);
-      }
     }
-
-    // Averaging ultrasonic sensor readings
     for (uint8_t s = 0; s < 3; s++) {
       float sum = 0;
       for (auto v : bufUS[s]) sum += v;
       out.dist[s] = uint16_t(sum / 5.0);
     }
-
     return out;
   }
 };
 
-// ========== NAVIGATION CONTROLLER ========== 
+// ---------------- NAVIGATION ----------------
 class NavigationSystem {
   MotorController& motors;
-  SensorArray&     sensors;
+  SensorArray& sensors;
 
-  enum State { IDLE, MOVING, REV, AVOID };
+  enum State { IDLE, MOVING, AVOID, REV };
   State st = IDLE;
   uint32_t actionTs = 0;
+  uint8_t reverseAttempts = 0;
 
   bool safeAhead(uint16_t d) const { return d > OBSTACLE_DISTANCE; }
   bool canTurn(uint16_t d) const { return d > TURNING_DISTANCE; }
 
-  // Overloaded debugPrint functions for both RAM and Flash strings
-  void debugPrint(const char* msg) {
-    Serial.println(msg);
-  }
+  void debugPrint(const __FlashStringHelper* msg) { Serial.println(msg); }
 
-  void debugPrint(const __FlashStringHelper* msg) {
-    Serial.println(msg);
+  void printSensorData(const SensorArray::Data& D) {
+    Serial.print("Distances (L,F,R): ");
+    Serial.print(D.dist[0]); Serial.print(", ");
+    Serial.print(D.dist[1]); Serial.print(", ");
+    Serial.print(D.dist[2]); Serial.print(" | IR (L,R): ");
+    Serial.print(D.ir[0]); Serial.print(", ");
+    Serial.println(D.ir[1]);
   }
 
 public:
-  NavigationSystem(MotorController& m, SensorArray& s)
-    : motors(m), sensors(s) {}
+  NavigationSystem(MotorController& m, SensorArray& s) : motors(m), sensors(s) {}
 
   void update() {
     auto D = sensors.read();
     uint32_t now = millis();
+    printSensorData(D);
 
-    // Initial stationary state
-    if (st == IDLE) {
-      bool motionDetected = false;
-      for (int i = 0; i < 4; i++) {
-        if (D.pir[i]) {
-          motionDetected = true;
-          break;
-        }
-      }
-
-      if (motionDetected) {
-        st = MOVING; actionTs = now; motors.forward();
-        debugPrint(F(">>> STATIONARY → MOVING (Motion Detected)"));
-      }
-    }
-
-    // Existing logic for navigation
     switch (st) {
-      case MOVING:
-        if (!safeAhead(D.dist[1]) || D.ir[0] || D.ir[1]) {
-          st = REV;  actionTs = now; motors.backward();
-          debugPrint(F(">>> MOVING → REVERSING"));
-        }
+      case IDLE:
+        if (!safeAhead(D.dist[1])) { st = REV; actionTs = now; motors.backward(); debugPrint(F(">>> IDLE → REVERSING")); }
+        else { st = MOVING; actionTs = now; motors.forward(); debugPrint(F(">>> IDLE → MOVING FORWARD")); }
         break;
-
+      case MOVING:
+        if (!safeAhead(D.dist[1]) || D.ir[0] || D.ir[1]) { st = REV; actionTs = now; motors.backward(); debugPrint(F(">>> MOVING → REVERSING")); }
+        else if (D.dist[0] < OBSTACLE_DISTANCE) { motors.turnRight(); debugPrint(F(">>> MOVING → TURN RIGHT")); }
+        else if (D.dist[2] < OBSTACLE_DISTANCE) { motors.turnLeft(); debugPrint(F(">>> MOVING → TURN LEFT")); }
+        break;
       case REV:
         if (now - actionTs >= REVERSE_TIME) {
-          bool L = canTurn(D.dist[0]) && !D.ir[0];
-          bool R = canTurn(D.dist[2]) && !D.ir[1];
-
-          if (L && R) {
-            if (D.dist[0] > D.dist[2]) {
-              motors.turnLeft();
-              debugPrint(F(">>> TURN LEFT (both OK)"));
-            } else {
-              motors.turnRight();
-              debugPrint(F(">>> TURN RIGHT (both OK)"));
-            }
-          } else if (L) {
-            motors.turnLeft();
-            debugPrint(F(">>> TURN LEFT"));
-          } else if (R) {
-            motors.turnRight();
-            debugPrint(F(">>> TURN RIGHT"));
-          } else {
-            st = REV; actionTs = now; motors.backward();
-            debugPrint(F(">>> FULL REVERSE (no way to turn)"));
-            break;
-          }
-
-          st = AVOID; actionTs = now;
+          if (reverseAttempts++ < MAX_REVERSE_ATTEMPTS) { st = AVOID; actionTs = now; motors.turnLeft(); debugPrint(F(">>> REV → AVOID")); }
+          else { reverseAttempts = 0; st = MOVING; motors.forward(); debugPrint(F(">>> REV (MAXED) → MOVING")); }
         }
         break;
-
       case AVOID:
         if (now - actionTs >= TURN_TIME) {
-          st = MOVING; actionTs = now; motors.forward();
-          debugPrint(F(">>> AVOID → MOVING"));
+          st = MOVING; motors.forward(); debugPrint(F(">>> AVOID → MOVING"));
         }
         break;
     }
   }
 };
 
-// ========== GLOBAL OBJECTS ========== 
+// ---------------- GLOBAL OBJECTS ----------------
 MotorController motors(MOTOR_PINS);
-SensorArray     sensors;
+SensorArray sensors;
 NavigationSystem nav(motors, sensors);
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println(F(">> Robot System Ready!"));
+  pinMode(pirSensor1, INPUT);
+  pinMode(pirSensor2, INPUT);
+  Serial.begin(9600);
+  delay(5000);
+  motors.stop();
 }
 
 void loop() {
-  nav.update();
+  bool sensor1 = digitalRead(pirSensor1);
+  bool sensor2 = digitalRead(pirSensor2);
+
+  if (!motionDetected && millis() - debounceTime > debounceDelay) {
+    if (sensor1 == HIGH || sensor2 == HIGH) {
+      motionDetected = true;
+      motionTime = millis();
+      Serial.println("Motion detected! Starting robot.");
+    }
+    debounceTime = millis();
+  }
+
+  if (motionDetected && millis() - motionTime < taskDuration) {
+    nav.update();
+  }
+  else if (motionDetected && millis() - motionTime >= taskDuration) {
+    motionDetected = false;
+    motors.stop();
+    Serial.println("10 seconds passed. Stopping robot, awaiting motion...");
+  }
+
+  delay(50);
 }
