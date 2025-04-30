@@ -1,176 +1,343 @@
-// ========== ADVANCED OOP-BASED ROBOTIC SYSTEM ========== 
+/* ========== ADVANCED OOP-BASED ROBOTIC SYSTEM ========== 
+   CS-112 Project | Version: 0.0 | Author: Usman Azhar & Fatima Rehman
+   Features: Object-Oriented Architecture, Sensor Fusion, 
+   Adaptive Navigation, Motion Cooldown System */
+
 #include <Arduino.h>
 #include <NewPing.h>
 #include <stdlib.h>
 
-// Forward declarations
-class MotorController;
-class SensorArray;
-class NavigationSystem;
+// ================== FORWARD DECLARATIONS ==================
+class MotorController;   // Handles motor operations
+class SensorArray;       // Manages all sensors
+class NavigationSystem;  // Core navigation logic
 
-// ---------------- UTILITY MACROS ----------------
-#define BIT_SET(x, bit) ((x) |= (1UL << (bit)))
-#define BIT_CLEAR(x, bit) ((x) &= ~(1UL << (bit)))
-#define BIT_CHECK(x, bit) (((x) >> (bit)) & 1U)
+// ================== UTILITY MACROS ==================
+// Bit manipulation macros for efficient hardware control
+#define BIT_SET(x, bit)    ((x) |= (1UL << (bit)))    // Set specific bit
+#define BIT_CLEAR(x, bit)  ((x) &= ~(1UL << (bit)))   // Clear specific bit
+#define BIT_CHECK(x, bit)  (((x) >> (bit)) & 1U)      // Check bit status
 
-// ---------------- PIR SENSOR SETUP ----------------
-class PIRSensor {
-  const uint8_t leftPin;
-  const uint8_t rightPin;
-  static const uint32_t debounceDelay = 1000;
-  static const uint32_t taskDuration = 20000;
-  bool motionDetected = false;
-  uint32_t lastMotion = 0;
-  uint32_t debounceTime = 0;
+// ================== SENSOR BASE CLASS ==================
+// Abstract base class for all sensor types
+class SensorBase {
+protected:
+  uint32_t lastReading = 0;  // Timestamp of last sensor reading
+  
+public:
+  virtual void refresh() = 0;  // Pure virtual method for sensor updates
+  virtual ~SensorBase() {}      // Virtual destructor for proper cleanup
+};
+
+// ================== PIR MOTION SENSOR CLASS ==================
+// Handles PIR sensor operations with debouncing and cooldown management
+class PIRSensor : public SensorBase {
+  // Hardware configuration
+  const uint8_t leftPin;   // Left sensor digital pin
+  const uint8_t rightPin;  // Right sensor digital pin
+
+  // Timing constants (milliseconds)
+  static const uint32_t debounceDelay = 1000;    // Minimum time between triggers
+  static const uint32_t taskDuration = 20000;    // Active operation period
+  static const uint32_t INIT_STABILIZE = 10000;  // Initial stabilization time
+  static const uint32_t CYCLE_COOLDOWN = 5000;   // Inactive cooling period
+
+  // State management
+  bool motionDetected = false;     // Current motion status
+  uint32_t lastMotion = 0;         // Last detection timestamp
+  uint32_t debounceTime = 0;       // Debounce timer
+  uint32_t cycleEndTime = 0;       // Cycle completion time
+  bool initialized = false;        // Initialization flag
+  bool cooldownMsgShown = false;   // Cooldown UI state
+
+  // Cooldown subsystem
+  uint32_t cooldownStart = 0;      // Cooldown start time
+  bool timerActive = false;        // Cooldown active flag
+  uint32_t lastDisplay = 0;        // Cooldown UI refresh timer
 
 public:
+  // Constructor: Initializes hardware and stabilization
   PIRSensor(uint8_t l, uint8_t r) : leftPin(l), rightPin(r) {
     pinMode(leftPin, INPUT);
     pinMode(rightPin, INPUT);
-    delay(5000);
-    if(Serial) Serial.println("PIR Sensors initialized");
+    
+    if(Serial) {
+      Serial.println("\n=== STARTUP ===");
+      Serial.println("System: Initializing sensors");
+      Serial.print("Stabilization: ");
+      for(int i = INIT_STABILIZE/1000; i > 0; i--) {
+        Serial.print(i); 
+        Serial.print("s...");
+        delay(1000);
+      }
+      Serial.println("\nSystem: Sensors stabilized ");
+    }
+    initialized = true;
   }
 
+  // State check for cooldown management
+  bool isCoolingDown() const { return timerActive; } 
+
+  // Main detection logic with debouncing and state management
   bool detected() {
     uint32_t now = millis();
+    
+    if(!initialized) return false;
+
+    // Handle cooldown timer display
+    if(timerActive) {
+      if(now - cooldownStart >= CYCLE_COOLDOWN) {
+        timerActive = false;
+        if(Serial) {
+          Serial.println("System: Ready for new input");
+          Serial.println("==============================");
+        }
+      } else {
+        if(now - lastDisplay >= 1000) {
+          uint32_t remaining = (CYCLE_COOLDOWN - (now - cooldownStart) + 999) / 1000;
+          if(Serial) {
+            Serial.print("Stabilization timer: ");
+            Serial.print(remaining);
+            Serial.println("s remaining");
+          }
+          lastDisplay = now;
+        }
+        return false;
+      }
+    }
+    
+    // Cycle completion handling
+    if(cycleEndTime > 0) {
+      if((now - cycleEndTime) < CYCLE_COOLDOWN) {
+        if(!cooldownMsgShown) {
+          if(Serial) {
+            Serial.println("\n=== CYCLE COMPLETE ===");
+            Serial.println("System: Stabilizing sensors");
+          }
+          cooldownStart = now;
+          timerActive = true;
+          lastDisplay = now;
+          cooldownMsgShown = true;
+        }
+        return false;
+      } else {
+        cycleEndTime = 0;
+        cooldownMsgShown = false;
+      }
+    }
+
+    // Sensor reading and debouncing
     bool sensor1 = digitalRead(leftPin);
     bool sensor2 = digitalRead(rightPin);
 
-    if (!motionDetected && now - debounceTime > debounceDelay) {
+    // New motion detection logic
+    if (!motionDetected && (now - debounceTime > debounceDelay)) {
       if (sensor1 || sensor2) {
         motionDetected = true;
         lastMotion = now;
-        if (Serial) {
-          if (sensor1 && !sensor2) Serial.println("Motion on LEFT → Activating...");
-          else if (sensor2 && !sensor1) Serial.println("Motion on RIGHT → Activating...");
-          else Serial.println("Motion AHEAD → Activating...");
-          Serial.println("Robot ACTIVE.");
+        cycleEndTime = 0;
+        if(Serial) {
+          Serial.println("\n=== MOTION DETECTED ===");
+          if(sensor1 && !sensor2) Serial.println("Direction: LEFT side");
+          else if(sensor2 && !sensor1) Serial.println("Direction: RIGHT side");
+          else Serial.println("Direction: FRONTAL");
+          Serial.println("Status: ACTIVATED");
         }
       }
       debounceTime = now;
     }
-    if (motionDetected && now - lastMotion >= taskDuration) {
+    
+    // Motion timeout handling
+    if(motionDetected && (now - lastMotion >= taskDuration)) {
       motionDetected = false;
-      if(Serial) Serial.println("Time limit reached. Robot IDLE.");
+      cycleEndTime = now;
+      if(Serial) Serial.println("System: Normal operation time elapsed");
     }
     return motionDetected;
   }
+
+  // Static configuration display method
+  static void printConfig() {
+    if(Serial) {
+      Serial.println("\nPIR CONFIG:");
+      Serial.println("Debounce: 1000ms");
+      Serial.println("Task Duration: 20000ms");
+    }
+  }
+
+  // SensorBase interface implementation
+  void refresh() override { detected(); }
 };
 
-// ---------------- MOTOR CONTROL ----------------
+// ================== MOTOR CONTROLLER CLASS ==================
+// Manages motor operations using LN298 Motor Driver
 class MotorController {
-  const uint8_t pins[4];
-  uint8_t state;
-  static int totalMoves;
+  // Hardware configuration
+  const uint8_t pins[4];  // Motor driver pins [IN1, IN2, IN3, IN4]
+  uint8_t state;          // Current motor state
+  static int totalMoves;  // Movement counter
 
+  // Applies current state to motor pins
   void apply() const {
     for (uint8_t i = 0; i < 4; ++i)
       digitalWrite(pins[i], (state & (0b1000 >> i)) ? HIGH : LOW);
   }
 
 public:
+  // Constructor: Initializes motor pins
   MotorController(const uint8_t mp[4]) : pins{mp[0], mp[1], mp[2], mp[3]}, state(0) {
     for (auto p : pins) pinMode(p, OUTPUT);
     if(Serial) Serial.println("Motor controller initialized");
   }
 
-  void forward()     { state = 0b0110; apply(); if(Serial) Serial.println("→ Moving Forward"); totalMoves++; }
-  void backward()    { state = 0b1001; apply(); if(Serial) Serial.println("← Reversing"); totalMoves++; }
-  void turnLeft()    { state = 0b0010; apply(); if(Serial) Serial.println("↺ Turning Left"); totalMoves++; }
-  void turnRight()   { state = 0b0100; apply(); if(Serial) Serial.println("↻ Turning Right"); totalMoves++; }
-  void stop()        { state = 0b0000; apply(); if(Serial) Serial.println("■ Motors Stopped"); }
+  // Movement commands with state management
+  void forward()     { state = 0b0110; apply(); if(Serial) Serial.println("Moving Forward"); totalMoves++; }
+  void backward()    { state = 0b1001; apply(); if(Serial) Serial.println("Reversing"); totalMoves++; }
+  void turnLeft()    { state = 0b0010; apply(); if(Serial) Serial.println("Turning Left"); totalMoves++; }
+  void turnRight()   { state = 0b0100; apply(); if(Serial) Serial.println("Turning Right"); totalMoves++; }
+  
+  // Stop command with object instance tracking
+  void stop() { 
+    state = 0b0000; 
+    apply(); 
+    if(Serial) {
+      Serial.print("Motors Stopped");
+      Serial.println((uint32_t)this, HEX);
+    }
+  }
 
+  // Friend class access for navigation system
   friend class NavigationSystem;
 
+  // Static movement counter accessor
   static int getTotalMoves() { return totalMoves; }
 };
 
+// Initialize static member
 int MotorController::totalMoves = 0;
 
-// ---------------- SENSOR SYSTEM ----------------
+// ================== SENSOR ARRAY CLASS ==================
+// Manages all environmental sensors (Ultrasonic + IR)
 class SensorArray {
-  NewPing* sonar[3];
-  uint8_t irPins[2];
-  uint32_t lastSample;
-  float bufUS[3][5];
-  uint8_t idxUS;
+  NewPing* sonar[3];      // Ultrasonic sensor array
+  uint8_t irPins[2];      // IR sensor pins
+  uint32_t lastSample;    // Last sampling time
+  float bufUS[3][5];      // Ultrasonic data buffer
+  uint8_t idxUS;          // Buffer index
 
 public:
+  // Sensor data structure
   struct Data {
-    uint16_t dist[3];
-    bool     ir[2];
+    uint16_t dist[3];  // Ultrasonic distances
+    bool     ir[2];    // IR sensor states
   };
 
+  // Constructor: Initializes sensors
   SensorArray() : lastSample(0), idxUS(0), irPins{26, 27} {
-    sonar[0] = new NewPing(30, 31, 200);
-    sonar[1] = new NewPing(28, 29, 200);
-    sonar[2] = new NewPing(32, 33, 200);
+    sonar[0] = new NewPing(30, 31, 200);  // Left sensor
+    sonar[1] = new NewPing(28, 29, 200);  // Front sensor
+    sonar[2] = new NewPing(32, 33, 200);  // Right sensor
+    
     for (auto& p : irPins) pinMode(p, INPUT);
     memset(bufUS, 0, sizeof(bufUS));
     if(Serial) Serial.println("Sensor array initialized");
   }
 
+  // Main sensor reading method
   Data read() {
     Data d = {};
     uint32_t now = millis();
+    
+    // Ultrasonic sampling (50ms interval)
     if (now - lastSample >= 50) {
       lastSample = now;
       for (int i = 0; i < 3; ++i) {
         uint16_t r = sonar[i]->ping_cm();
-        bufUS[i][idxUS] = (r == 0 ? 200 : r);
+        bufUS[i][idxUS] = (r == 0 ? 200 : r);  // Handle out-of-range
       }
-      idxUS = (idxUS + 1) % 5;
+      idxUS = (idxUS + 1) % 5;  // Circular buffer management
+      
+      // IR sensor reading with validation
       for (int i = 0; i < 2; ++i) {
         bool a = digitalRead(irPins[i]) == LOW;
-        delay(1);
+        delay(1);  // Debouncing delay
         bool b = digitalRead(irPins[i]) == LOW;
-        d.ir[i] = a && b;
+        d.ir[i] = a && b;  // Validate persistent reading
       }
     }
+
+    // Calculate moving averages
     for (int i = 0; i < 3; ++i) {
       float sum = 0;
       for (float v : bufUS[i]) sum += v;
       d.dist[i] = uint16_t(sum / 5);
     }
+
+    // Diagnostic output
     if(Serial) {
-      Serial.print("[IR Sensors] Left: "); Serial.print(d.ir[0]);
-      Serial.print(" Right: "); Serial.println(d.ir[1]);
+      Serial.print("[IR Sensors] Left: ");
+      Serial.print(d.ir[0]);
+      Serial.print(" Right: ");
+      Serial.println(d.ir[1]);
     }
     return d;
   }
 
+  // Destructor: Cleanup ultrasonic sensors
   ~SensorArray() {
     for (int i = 0; i < 3; ++i) delete sonar[i];
   }
+
+  // Friend function for sensor calibration
+  friend void calibrateSensors(SensorArray& array);
 };
 
-// ---------------- ROBOT BASE CLASS ----------------
+// ================== SENSOR CALIBRATION FUNCTION ==================
+void calibrateSensors(SensorArray& array) {
+  if(Serial) Serial.println("\n=== CALIBRATION MODE ===");
+  for(int i=0; i<3; i++) 
+    array.sonar[i]->ping_cm();  // Dummy pings for stabilization
+  if(Serial) Serial.println("Calibration complete");
+}
+
+// ================== ROBOT BASE INTERFACE ==================
+// Abstract base class for robot components
 class RobotBase {
 public:
-  virtual void update() = 0;
-  virtual ~RobotBase() {}
+  virtual void update() = 0;  // Main update method
+  virtual ~RobotBase() {}      // Virtual destructor
 };
 
-// ---------------- NAVIGATION SYSTEM ----------------
-class NavigationSystem : public RobotBase {
-  MotorController& motors;
-  SensorArray& sensors;
+// ================== STATUS REPORTING INTERFACE ==================
+// Interface for system status reporting
+class IStatusReporter {
+public:
+  virtual String getStatus() const = 0;  // Status string generation
+  virtual ~IStatusReporter() {}          // Virtual destructor
+};
 
+// ================== NAVIGATION SYSTEM CLASS ==================
+// Core navigation logic implementing state machine
+class NavigationSystem : public RobotBase, public IStatusReporter {
+  MotorController& motors;  // Motor controller reference
+  SensorArray& sensors;     // Sensor array reference
+
+  // State machine definitions
   enum State { IDLE, MOVING, AVOID, REV } st;
-  uint32_t actionTs;
-  uint8_t reverseAttempts;
-  uint8_t reverseCount;
-  uint32_t lastReverse;
+  uint32_t actionTs;            // Action timestamp
+  uint8_t reverseAttempts;      // Reverse maneuver counter
+  uint8_t reverseCount;         // Consecutive reverses
+  uint32_t lastReverse;         // Last reverse time
 
-  // Enhanced safety parameters
-  static const uint16_t OBSTACLE_DISTANCE = 40;    // Increased from 30
-  static const uint16_t TURNING_DISTANCE = 50;     // Increased from 40
-  static const uint16_t REVERSE_TIME = 500;        // Increased from 300
-  static const uint16_t TURN_TIME = 800;           // Increased from 500
-  static const uint16_t SAFETY_BUFFER = 10;        // New safety margin
+  // Navigation parameters
+  static const uint16_t OBSTACLE_DISTANCE = 40;    // Critical stop distance (cm)
+  static const uint16_t TURNING_DISTANCE = 50;     // Maneuver threshold (cm)
+  static const uint16_t REVERSE_TIME = 500;        // Backward movement duration
+  static const uint16_t TURN_TIME = 800;           // Turning duration
+  static const uint16_t SAFETY_BUFFER = 10;        // Safety margin (cm)
 
+  // Safety check methods
   bool safe(uint16_t d) const { 
-    // Hysteresis for safer forward movement
     return d > (OBSTACLE_DISTANCE + SAFETY_BUFFER); 
   }
 
@@ -179,10 +346,14 @@ class NavigationSystem : public RobotBase {
   }
 
 public:
-  NavigationSystem(MotorController& m, SensorArray& s) : motors(m), sensors(s), st(IDLE), actionTs(0), reverseAttempts(0), reverseCount(0), lastReverse(0) {
+  // Constructor: Initializes navigation system
+  NavigationSystem(MotorController& m, SensorArray& s) 
+    : motors(m), sensors(s), st(IDLE), actionTs(0), 
+      reverseAttempts(0), reverseCount(0), lastReverse(0) {
     if(Serial) Serial.println("Navigation system initialized");
   }
 
+  // Main navigation update method
   void update() override {
     auto D = sensors.read();
     uint32_t now = millis();
@@ -194,14 +365,19 @@ public:
       if(Serial) Serial.println("! Proximity Alert: Braking !");
     }
 
+    // State machine execution
     switch (st) {
       case IDLE:
         if(Serial) Serial.println("State: IDLE");
         if (criticalObstacle(D.dist[1])) {
-          st = REV; actionTs = now; motors.backward();
+          st = REV; 
+          actionTs = now; 
+          motors.backward();
           if(Serial) Serial.println("!! CRITICAL OBSTACLE !!");
         } else {
-          st = MOVING; actionTs = now; motors.forward();
+          st = MOVING; 
+          actionTs = now; 
+          motors.forward();
         }
         break;
 
@@ -209,15 +385,17 @@ public:
         if(Serial) Serial.println("State: MOVING");
         if (criticalObstacle(D.dist[1]) || D.ir[0] || D.ir[1]) {
           if(Serial) Serial.println("Obstacle/IR → Emergency Reverse");
-          st = REV; actionTs = now; motors.backward();
+          st = REV; 
+          actionTs = now; 
+          motors.backward();
         } else if (!safe(D.dist[0])) {
           if(Serial) Serial.println("Left blocked → Sharp Right");
           motors.turnRight();
-          delay(150); // Additional turn stabilization
+          delay(150);  // Turn stabilization
         } else if (!safe(D.dist[2])) {
           if(Serial) Serial.println("Right blocked → Sharp Left");
           motors.turnLeft();
-          delay(150); // Additional turn stabilization
+          delay(150);  // Turn stabilization
         } else {
           motors.forward();
         }
@@ -230,24 +408,31 @@ public:
           if (now - lastReverse > 5000) reverseCount = 0;
           lastReverse = now;
 
+          // Dead-end handling
           if (reverseCount >= 3) {
             if(Serial) Serial.println("Dead-end! 180° Spin");
-            motors.turnRight(); delay(1200);
-            motors.turnRight(); delay(1200);
+            motors.turnRight(); 
+            delay(1200);
+            motors.turnRight(); 
+            delay(1200);
             reverseCount = 0;
           }
 
-          // Check clearance before turning
+          // Clearance check
           if (safe(sensors.read().dist[1])) { 
             if(Serial) Serial.println("Path cleared → Moving");
-            st = MOVING; motors.forward();
+            st = MOVING; 
+            motors.forward();
           } else if (reverseAttempts++ < 3) {
             if(Serial) Serial.println("Avoiding Left");
-            st = AVOID; actionTs = now; motors.turnLeft();
+            st = AVOID; 
+            actionTs = now; 
+            motors.turnLeft();
           } else {
             if(Serial) Serial.println("Reset → Forward");
             reverseAttempts = 0;
-            st = MOVING; motors.forward();
+            st = MOVING; 
+            motors.forward();
           }
         }
         break;
@@ -256,44 +441,112 @@ public:
         if(Serial) Serial.println("State: AVOIDING");
         if (now - actionTs >= TURN_TIME) {
           if(Serial) Serial.println("Avoidance Complete");
-          st = MOVING; motors.forward();
+          st = MOVING; 
+          motors.forward();
         }
         break;
     }
   }
+
+  // Status reporting implementation
+  String getStatus() const override {
+    return String("NavSys v2.1 | Moves: ") + MotorController::getTotalMoves();
+  }
 };
 
-// ---------------- GLOBAL OBJECT POINTERS ----------------
-PIRSensor* pir = nullptr;
-MotorController* motors = nullptr;
-SensorArray* sensors = nullptr;
-NavigationSystem* nav = nullptr;
+// ================== GLOBAL SYSTEM COMPONENTS ==================
+PIRSensor* pir = nullptr;          // Motion sensor instance
+MotorController* motors = nullptr; // Motor controller instance
+SensorArray* sensors = nullptr;    // Sensor array instance
+NavigationSystem* nav = nullptr;   // Navigation system instance
 
+// ================== ARDUINO SETUP FUNCTION ==================
 void setup() {
   Serial.begin(9600);
-  delay(100); // Allow serial port to initialize
+  while(!Serial);
+  Serial.println("\n=== BIBBLE ===");
+  Serial.println("Version: 0.0 | CS-112 Project");
+  Serial.println("=============================");
   
-  // Initialize components in correct order
+  // Hardware initialization
   pir = new PIRSensor(35, 34);
   const uint8_t MOTOR_PINS[4] = {22, 23, 24, 25};
   motors = new MotorController(MOTOR_PINS);
   sensors = new SensorArray();
   nav = new NavigationSystem(*motors, *sensors);
 
+  // System configuration display
+  PIRSensor::printConfig();
+
+  // Startup completion
   if(Serial) {
-    Serial.println("\n======= Bibble OOP Bot Booting =======");
-    Serial.println("System initialized. Awaiting motion input...");
+    Serial.println("\nSystem: Initialization complete");
+    Serial.println("Status: Ready for operation");
+    Serial.println("=============================");
   }
   motors->stop();
 }
 
+// ================== ARDUINO MAIN LOOP ==================
 void loop() {
-  if (pir->detected()) {
-    if(Serial) Serial.println("→ Motion Detected: Executing Navigation Update");
+  static uint32_t lastUpdate = 0;    // Status update timer
+  static bool activeStatus = false;  // Navigation state flag
+  static bool standbyMsgShown = false; // UI state management
+  static bool motorsStopped = false; // Motor stop flag
+
+  // Motion detection handling
+  if(pir->detected()) {
+    standbyMsgShown = false;
+    motorsStopped = false;
+    
+    // Activate navigation system
+    if(!activeStatus) {
+      if(Serial) Serial.println("\nStatus: NAVIGATION ACTIVE");
+      activeStatus = true;
+    }
+    
+    // Periodic status updates
+    if(millis() - lastUpdate >= 1000) {
+      if(Serial) Serial.println("System: Operational - Scanning environment");
+      lastUpdate = millis();
+    }
+    
     nav->update();
   } else {
-    if(Serial) Serial.println("■ No Motion: Motors Stopped");
-    motors->stop();
+    // Motor stop management
+    if (!motorsStopped) {
+      motors->stop();
+      motorsStopped = true;
+    }
+    
+    // Cooldown state handling
+    if(pir->isCoolingDown() == false) {
+      if(activeStatus) {
+        if(Serial) {
+          Serial.println("\nStatus: INITIALIZING STANDBY");
+          Serial.println("System: Stabilizing components...");
+          Serial.println("==============================");
+        }
+        activeStatus = false;
+        standbyMsgShown = true;
+      }
+      else if(!standbyMsgShown) {
+        if(Serial) {
+          Serial.println("\nStatus: AWAITING INPUT");
+          Serial.println("System: Ready for motion detection");
+          Serial.println("==============================");
+        }
+        standbyMsgShown = true;
+      }
+    }
   }
-  delay(50);
+
+  // Sensor calibration routine (one-time execution)
+  static bool calibrated = false;
+  if(!calibrated) {
+    calibrateSensors(*sensors);
+    calibrated = true;
+  }
+
+  delay(50);  // Main loop timing
 }
