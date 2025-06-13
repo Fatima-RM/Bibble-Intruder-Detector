@@ -2,7 +2,7 @@
 
 **Authors:**  
 Usman Azhar [GitHub](https://github.com/daffy-usman)  
-Fatima Rehman [GitHub]()
+Fatima Rehman [GitHub](https://github.com/Fatima-RM)
 
 ---
 
