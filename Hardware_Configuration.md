@@ -2,7 +2,9 @@
 
 **Project:** Advanced OOP-Based Robotic System  
 **Course:** CS-112  
-**Authors:** Usman Azhar & Fatima Rehman  
+**Authors:** 
+Usman Azhar [GitHub](https://github.com/daffy-usman)  
+Fatima Rehman [GitHub](https://github.com/Fatima-RM) 
 
 ---
 
