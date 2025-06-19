@@ -23,6 +23,7 @@ Through the integration of diverse sensors, the robot achieves robust perception
     - [Sensor Configuration](#sensor-configuration)
     - [Actuation and Power](#actuation-and-power)
     - [Connectivity and Wiring](#connectivity-and-wiring)
+    - [Pin Mapping](#pin-mapping)
 - [Software Design](#software-design)
     - [Motor Control Classes](#motor-control-classes)
     - [Sensor Classes](#sensor-classes)
@@ -63,9 +64,9 @@ The demand for cost-effective and efficient autonomous robots is growing, especi
 
 ### Sensor Configuration
 
-- **Ultrasonic Sensors (3x HC-SR04):** Positioned at the front, left, and right for real-time distance measurement and obstacle avoidance.
+- **Ultrasonic Sensors (3x HC-SR04):** Positioned at the left, front, and right for real-time distance measurement and obstacle avoidance.
 - **Infrared (IR) Sensors (2x):** Installed at the front for close-range object detection.
-- **PIR Motion Sensors (4x):** Cover all sides (front, left, right, rear) for 360° human motion detection.
+- **PIR Motion Sensors (2x):** Left and right for human motion detection (expandable to 4 for all-side coverage).
 
 ### Actuation and Power
 
@@ -78,13 +79,43 @@ The demand for cost-effective and efficient autonomous robots is growing, especi
 | Component           | Arduino Connection                        |
 |---------------------|-------------------------------------------|
 | Ultrasonic Sensors  | Digital I/O pins (Trigger & Echo)         |
-| IR Sensors          | Analog/Digital input pins                 |
+| IR Sensors          | Digital input pins                        |
 | PIR Sensors         | Digital input pins                        |
-| L298N Motor Driver  | PWM (speed), Digital (direction) pins     |
+| L298N Motor Driver  | Digital pins for direction                |
 | DC Motors           | Connected via L298N outputs               |
 | Power Supply        | VIN and motor driver power input          |
 
-Connections are designed for modularity, noise minimization, and stability.
+Designed for modularity, noise minimization, and stability.
+
+---
+
+### Pin Mapping
+
+Below is the pin mapping **according to the provided source code**:
+
+| Device / Signal                  | Arduino Pin | Description                                  |
+|----------------------------------|-------------|----------------------------------------------|
+| **Motor Driver IN1**             | 22          | Motor A direction                            |
+| **Motor Driver IN2**             | 23          | Motor A direction                            |
+| **Motor Driver IN3**             | 24          | Motor B direction                            |
+| **Motor Driver IN4**             | 25          | Motor B direction                            |
+| **IR Sensor Left**               | 26          | Digital input for left IR sensor             |
+| **IR Sensor Right**              | 27          | Digital input for right IR sensor            |
+| **Ultrasonic Front Trig**        | 28          | Trigger pin for front ultrasonic sensor      |
+| **Ultrasonic Front Echo**        | 29          | Echo pin for front ultrasonic sensor         |
+| **Ultrasonic Left Trig**         | 30          | Trigger pin for left ultrasonic sensor       |
+| **Ultrasonic Left Echo**         | 31          | Echo pin for left ultrasonic sensor          |
+| **Ultrasonic Right Trig**        | 32          | Trigger pin for right ultrasonic sensor      |
+| **Ultrasonic Right Echo**        | 33          | Echo pin for right ultrasonic sensor         |
+| **PIR Sensor Right**             | 34          | Digital input for right PIR sensor           |
+| **PIR Sensor Left**              | 35          | Digital input for left PIR sensor            |
+| **GND**                          | GND         | Common ground                                |
+| **VCC**                          | 5V/3.3V     | Sensor and control logic power               |
+
+> **Note:**  
+> - PIR sensors in this code are only using two (Left: 35, Right: 34).  
+> - All pins above correspond to Arduino MEGA or similar (with sufficient digital I/O).
+> - Pins for motor speed (PWM) are not used in this code, only direction pins are wired.
 
 ---
 
@@ -92,26 +123,24 @@ Connections are designed for modularity, noise minimization, and stability.
 
 ### Motor Control Classes
 
-- **MotorBase Class:** Abstracts basic motor operations (speed, direction).
-- **Derived Classes:** Implement specific maneuvers (forward, backward, left, right) with encapsulated motor driver details.
+- **MotorController**: Manages DC motor direction and state using bitwise control.
+- **MotorBase (abstract concept)**: You can extend with other movement classes for more specialized maneuvers.
 
 ### Sensor Classes
 
-- **Sensor Base Class:** Provides a unified interface (e.g., `readValue()`, `isTriggered()`) for all sensors.
-- **Derived Classes:** Ultrasonic, IR, and PIR sensor classes override methods for sensor-specific logic, enabling polymorphic sensor management.
+- **SensorBase**: Abstract base for all sensors, unifies polling.
+- **PIRSensor**: Handles PIR motion detection with state and debounce logic.
+- **SensorArray**: Manages ultrasonic and IR sensors, provides filtered readings.
 
 ### Robot Behavior Integration
 
-- **MotorController Class:** Central coordinator integrating motor and sensor classes.
-    - Prioritizes human motion (PIR)
-    - Processes obstacle data (ultrasonic, IR)
-    - Applies abstraction and polymorphism for easy hardware upgrades and feature extensions.
+- **NavigationSystem**: Implements state machine for obstacle avoidance and movement, integrates with sensors and motors.
 
 ---
 
 ## UML Class Diagram
 
-This diagram illustrates the modular structure, relationships, and encapsulation of the major classes (MotorBase, movement classes, Sensor, UltrasonicSensor, IRSensor, PIRSensor, Robot).
+This diagram illustrates the modular structure, relationships, and encapsulation of the major classes (MotorController, SensorBase, PIRSensor, SensorArray, NavigationSystem).
 
 [View UML Diagram](https://app.eraser.io/workspace/6d3iGFlBS0CWUzSBsD6v?origin=share)
 
@@ -119,49 +148,49 @@ This diagram illustrates the modular structure, relationships, and encapsulation
 
 ## Use Case Diagram
 
-- **Motion Detection:** PIR sensors monitor for human presence in all directions.
-- **Autonomous Navigation:** Robot moves toward detected motion.
+- **Motion Detection:** PIR sensors monitor for human presence (left/right).
+- **Autonomous Navigation:** Robot moves in response to detected motion.
 - **Obstacle Avoidance:** Ultrasonic and IR sensors ensure safe navigation.
 
 ---
 
 ## C++ Implementation and OOP Concepts
 
-- **Abstraction:** MotorBase class hides low-level hardware details.
-- **Inheritance:** Movement classes extend MotorBase for different maneuvers.
-- **Polymorphism:** Overridden methods allow runtime selection of movement strategies.
-- **Encapsulation:** Internal hardware states are protected and modular.
+- **Abstraction:** SensorBase and MotorController hide hardware details.
+- **Inheritance:** PIRSensor inherits from SensorBase.
+- **Polymorphism:** Overridden methods allow sensor extensibility.
+- **Encapsulation:** Internal states and timing variables are protected.
 
 ---
 
 ## Testing and Debugging
 
-- **Sensor Verification:** PIR sensors tested for sensitivity and coverage.
-- **Obstacle Avoidance:** Evaluated in diverse, cluttered environments.
-- **Debugging:** Used Arduino Serial Monitor for real-time data, calibrated thresholds, and synchronized sensor polling.
+- **Sensor Verification:** PIR and IR sensors tested for sensitivity and coverage.
+- **Obstacle Avoidance:** Evaluated in cluttered environments.
+- **Debugging:** Arduino Serial Monitor used for data and logic verification.
 
 ---
 
 ## Challenges Faced
 
-- **Noisy Sensor Data:** Addressed with threshold calibration and filtering.
-- **Timing Synchronization:** Improved sensor polling and command synchronization.
-- **Sensor Calibration:** Required iterative parameter tuning for reliable detection and tracking.
+- **Noisy Sensor Data:** Solved with calibration and moving averages.
+- **Timing Synchronization:** Improved polling and control loop design.
+- **Sensor Calibration:** Iterative threshold tuning for reliable detection.
 
 ---
 
 ## Conclusion
 
-This project successfully demonstrates robust, modular autonomous robot navigation using integrated PIR, ultrasonic, and IR sensors, coordinated by a C++ OOP framework. The system detects human motion, navigates toward it, and avoids obstacles in real time. The modular software design supports future enhancements and easy adaptation to new hardware.
+This project successfully demonstrates modular autonomous robot navigation using PIR, ultrasonic, and IR sensors, coordinated by a C++ OOP framework. The system detects motion, navigates, and avoids obstacles in real time. The modular software design supports future enhancements and easy adaptation to new hardware.
 
 ---
 
 ## Future Work
 
-- **Voice Recognition:** For hands-free, remote operation.
-- **Camera/Computer Vision:** For facial recognition and advanced target identification.
-- **GPS Navigation:** For outdoor path following and area mapping.
-- **Scalable Architecture:** OOP design allows seamless integration of new features.
+- **Voice Recognition:** Hands-free remote operation.
+- **Computer Vision:** Facial recognition and advanced target identification.
+- **GPS Navigation:** Outdoor path following and mapping.
+- **Scalable Architecture:** Seamless integration of new features.
 
 ---
 
